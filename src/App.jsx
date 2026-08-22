@@ -3,7 +3,7 @@ import {
   Home, MapPin, PiggyBank, Plane, BarChart3, Plus, X, Heart,
   Camera, Check, ChevronDown, Trash2, Pencil, Sparkles, Star,
   ArrowRight, Calendar, Compass, RotateCw, Menu, AlertCircle,
-  Map as MapIcon,
+  Map as MapIcon, StickyNote,
 } from "lucide-react";
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
@@ -85,6 +85,7 @@ async function geocodeCiudad(ciudad, pais) {
 
 // Migra datos guardados antes de que existieran coordenadas (versión 1 -> 2).
 function migrateData(d) {
+  d.destinos = (d.destinos || []).map((dest) => ({ ...dest, recomendaciones: Array.isArray(dest.recomendaciones) ? dest.recomendaciones : [] }));
   if (!d.version || d.version < 2) {
     d.destinos = (d.destinos || []).map((dest) => {
       if (dest.lat != null && dest.lng != null) return dest;
@@ -99,8 +100,15 @@ function migrateData(d) {
 function buildDemoData() {
   const year = new Date().getFullYear();
   const destinos = DEMO_CITIES.map((c) => ({
-    id: uid(), ...c, estado: "pendiente", fechaCreacion: todayISO(),
+    id: uid(), ...c, estado: "pendiente", fechaCreacion: todayISO(), recomendaciones: [],
   }));
+  destinos[0].recomendaciones = [
+    { id: uid(), titulo: "Trastevere al atardecer", categoria: "Visitar", recomendadoPor: "Sergio", nota: "Nos dijeron que merece mucho la pena pasear por la zona y cenar allí.", estado: "pendiente", ubicacion: "Trastevere, Roma" },
+    { id: uid(), titulo: "Carbonara auténtica", categoria: "Comer", recomendadoPor: "", nota: "Buscar una trattoria pequeña y evitar las zonas demasiado turísticas.", estado: "pendiente", ubicacion: "", },
+  ];
+  destinos[2].recomendaciones = [
+    { id: uid(), titulo: "Miradores de Lisboa", categoria: "Visitar", recomendadoPor: "", nota: "Apuntarnos un paseo por los miradores al atardecer.", estado: "visitado", ubicacion: "Lisboa" },
+  ];
   destinos[0].estado = "objetivo"; // Roma
   destinos[2].estado = "realizado"; // Lisboa
 
@@ -927,6 +935,7 @@ function Destinos({ data, persist, showToast, onVerEnMapa, focusId, onFocusHandl
   const [editing, setEditing] = useState(null);
   const [toDelete, setToDelete] = useState(null);
   const [marcarViaje, setMarcarViaje] = useState(null);
+  const [recomendacionesDestinoId, setRecomendacionesDestinoId] = useState(null);
   const [filtroEstado, setFiltroEstado] = useState("todos");
   const [saving, setSaving] = useState(false);
   const formRef = useRef(null);
@@ -1057,6 +1066,7 @@ function Destinos({ data, persist, showToast, onVerEnMapa, focusId, onFocusHandl
                   )}
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                     <button style={{ ...styles.btnGhost, padding: "7px 12px", fontSize: 12.5 }} onClick={() => { setEditing(d); setShowForm(true); }}><Pencil size={13} /> Editar</button>
+                    <button style={{ ...styles.btnGhost, padding: "7px 12px", fontSize: 12.5 }} onClick={() => setRecomendacionesDestinoId(d.id)}><StickyNote size={13} /> Recomendaciones {d.recomendaciones?.length ? `(${d.recomendaciones.length})` : ""}</button>
                     {d.lat != null && (
                       <button style={{ ...styles.btnGhost, padding: "7px 12px", fontSize: 12.5 }} onClick={() => onVerEnMapa && onVerEnMapa(d)}><MapIcon size={13} /> Ver en el mapa</button>
                     )}
@@ -1080,7 +1090,128 @@ function Destinos({ data, persist, showToast, onVerEnMapa, focusId, onFocusHandl
 
       {toDelete && <Confirm text={`¿Eliminar ${toDelete.ciudad}? Esta acción no se puede deshacer.`} onConfirm={eliminar} onCancel={() => setToDelete(null)} />}
       {marcarViaje && <MarcarViajeModal destino={marcarViaje} persist={persist} showToast={showToast} onClose={() => setMarcarViaje(null)} />}
+      {recomendacionesDestinoId && (() => {
+        const destinoActual = data.destinos.find((d) => d.id === recomendacionesDestinoId);
+        return destinoActual ? (
+          <RecomendacionesModal
+            destino={destinoActual}
+            persist={persist}
+            showToast={showToast}
+            onClose={() => setRecomendacionesDestinoId(null)}
+          />
+        ) : null;
+      })()}
     </div>
+  );
+}
+
+function RecomendacionesModal({ destino, persist, showToast, onClose }) {
+  const recomendaciones = destino.recomendaciones || [];
+  const [form, setForm] = useState({ titulo: "", categoria: "Visitar", recomendadoPor: "", nota: "", ubicacion: "" });
+  const [adding, setAdding] = useState(false);
+
+  const categorias = ["Visitar", "Comer", "Café", "Copas", "Naturaleza", "Compras", "Alojamiento", "Actividad", "Otro"];
+
+  const guardar = () => {
+    if (!form.titulo.trim()) return;
+    const nueva = { id: uid(), ...form, estado: "pendiente" };
+    persist((prev) => ({
+      ...prev,
+      destinos: prev.destinos.map((d) => d.id === destino.id
+        ? { ...d, recomendaciones: [...(d.recomendaciones || []), nueva] }
+        : d),
+    }));
+    setForm({ titulo: "", categoria: "Visitar", recomendadoPor: "", nota: "", ubicacion: "" });
+    setAdding(false);
+    showToast("Recomendación guardada 💌");
+  };
+
+  const cambiarEstado = (recId, estado) => {
+    persist((prev) => ({
+      ...prev,
+      destinos: prev.destinos.map((d) => d.id === destino.id
+        ? { ...d, recomendaciones: (d.recomendaciones || []).map((r) => r.id === recId ? { ...r, estado } : r) }
+        : d),
+    }));
+  };
+
+  const eliminar = (recId) => {
+    persist((prev) => ({
+      ...prev,
+      destinos: prev.destinos.map((d) => d.id === destino.id
+        ? { ...d, recomendaciones: (d.recomendaciones || []).filter((r) => r.id !== recId) }
+        : d),
+    }));
+    showToast("Recomendación eliminada");
+  };
+
+  return (
+    <Modal title={`💌 Recomendaciones · ${destino.ciudad}`} onClose={onClose} width={620}>
+      <p style={{ ...styles.sub, marginTop: -8, marginBottom: 18 }}>
+        Guardad aquí restaurantes, sitios, actividades o consejos que os hayan recomendado para este destino.
+      </p>
+
+      {!adding && (
+        <button style={{ ...styles.btnPrimary, width: "100%", justifyContent: "center", marginBottom: 18 }} onClick={() => setAdding(true)}>
+          <Plus size={16} /> Añadir recomendación
+        </button>
+      )}
+
+      {adding && (
+        <div style={{ background: C.paperAlt, border: `1px solid ${C.line}`, borderRadius: 16, padding: 16, marginBottom: 18 }}>
+          <Field label="¿Qué os han recomendado?">
+            <input autoFocus style={styles.input} value={form.titulo} onChange={(e) => setForm((f) => ({ ...f, titulo: e.target.value }))} placeholder="Trattoria, mirador, playa…" />
+          </Field>
+          <Field label="Categoría">
+            <select style={styles.input} value={form.categoria} onChange={(e) => setForm((f) => ({ ...f, categoria: e.target.value }))}>
+              {categorias.map((c) => <option key={c}>{c}</option>)}
+            </select>
+          </Field>
+          <Field label="¿Quién os lo recomendó? (opcional)">
+            <input style={styles.input} value={form.recomendadoPor} onChange={(e) => setForm((f) => ({ ...f, recomendadoPor: e.target.value }))} placeholder="Sergio, Ana, TikTok…" />
+          </Field>
+          <Field label="Ubicación o dirección (opcional)">
+            <input style={styles.input} value={form.ubicacion} onChange={(e) => setForm((f) => ({ ...f, ubicacion: e.target.value }))} placeholder="Trastevere, Roma" />
+          </Field>
+          <Field label="Notas">
+            <textarea style={{ ...styles.input, minHeight: 86, resize: "vertical" }} value={form.nota} onChange={(e) => setForm((f) => ({ ...f, nota: e.target.value }))} placeholder="¿Qué os dijeron? ¿Qué no debemos olvidar?" />
+          </Field>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button style={styles.btnGhost} onClick={() => setAdding(false)}>Cancelar</button>
+            <button style={styles.btnPrimary} onClick={guardar} disabled={!form.titulo.trim()}><Check size={15} /> Guardar</button>
+          </div>
+        </div>
+      )}
+
+      {recomendaciones.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "22px 10px", color: C.inkSoft }}>
+          <StickyNote size={30} style={{ marginBottom: 8, opacity: 0.55 }} />
+          <p style={{ margin: 0, fontFamily: "Fraunces, serif", fontSize: 18, color: C.ink }}>Todavía no tenéis recomendaciones</p>
+          <p style={{ margin: "6px 0 0", fontSize: 13 }}>Cuando alguien os recomiende un sitio, guardadlo aquí 💌</p>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gap: 10 }}>
+          {recomendaciones.map((r) => (
+            <div key={r.id} style={{ border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, background: "#fff" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+                <div>
+                  <p style={{ margin: 0, fontWeight: 800, fontSize: 15 }}>{r.estado === "visitado" ? "🟢" : r.estado === "no" ? "🔴" : "🟡"} {r.titulo}</p>
+                  <p style={{ margin: "4px 0 0", fontSize: 12.5, color: C.inkSoft }}>{r.categoria}{r.recomendadoPor ? ` · Recomendado por ${r.recomendadoPor}` : ""}</p>
+                </div>
+                <button onClick={() => eliminar(r.id)} style={{ background: "none", border: "none", color: C.clay, padding: 3 }} title="Eliminar"><Trash2 size={15} /></button>
+              </div>
+              {r.ubicacion && <p style={{ margin: "9px 0 0", fontSize: 12.5, color: C.teal }}>📍 {r.ubicacion}</p>}
+              {r.nota && <p style={{ margin: "9px 0 0", fontSize: 13.5, lineHeight: 1.5, color: C.inkSoft }}>{r.nota}</p>}
+              <div style={{ display: "flex", gap: 6, marginTop: 11, flexWrap: "wrap" }}>
+                <button onClick={() => cambiarEstado(r.id, "pendiente")} style={{ ...styles.btnGhost, padding: "5px 9px", fontSize: 11.5, opacity: r.estado === "pendiente" ? 1 : 0.65 }}>🟡 Pendiente</button>
+                <button onClick={() => cambiarEstado(r.id, "visitado")} style={{ ...styles.btnGhost, padding: "5px 9px", fontSize: 11.5, opacity: r.estado === "visitado" ? 1 : 0.65 }}>🟢 Visitado</button>
+                <button onClick={() => cambiarEstado(r.id, "no")} style={{ ...styles.btnGhost, padding: "5px 9px", fontSize: 11.5, opacity: r.estado === "no" ? 1 : 0.65 }}>🔴 No nos gustó</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Modal>
   );
 }
 

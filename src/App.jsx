@@ -1123,6 +1123,7 @@ function Destinos({ data, persist, showToast, onVerEnMapa, focusId, onFocusHandl
   const [saving, setSaving] = useState(false);
   const formRef = useRef(null);
   const recomendacionesRef = useRef(null);
+  const marcarViajeRef = useRef(null);
 
   const visibles = data.destinos.filter((d) => filtroEstado === "todos" || d.estado === filtroEstado);
 
@@ -1149,6 +1150,14 @@ function Destinos({ data, persist, showToast, onVerEnMapa, focusId, onFocusHandl
     }, 50);
     return () => window.clearTimeout(id);
   }, [recomendacionesDestinoId]);
+
+  useEffect(() => {
+    if (!marcarViaje) return;
+    const id = window.setTimeout(() => {
+      marcarViajeRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+    return () => window.clearTimeout(id);
+  }, [marcarViaje?.id]);
 
   const guardar = async (form) => {
     const needsGeocode = !editing || editing.ciudad !== form.ciudad || editing.pais !== form.pais || editing.lat == null;
@@ -1249,6 +1258,18 @@ function Destinos({ data, persist, showToast, onVerEnMapa, focusId, onFocusHandl
                 </div>
               )}
 
+              {marcarViaje?.id === d.id && (
+                <div ref={marcarViajeRef} style={{ gridColumn: "1 / -1", scrollMarginTop: 20 }}>
+                  <MarcarViajeModal
+                    destino={d}
+                    persist={persist}
+                    showToast={showToast}
+                    onClose={() => setMarcarViaje(null)}
+                    inline
+                  />
+                </div>
+              )}
+
               <div style={{ ...styles.card, padding: 0, overflow: "hidden" }} className="card-hover">
                 <div style={{ position: "relative", height: 140 }}>
                   <img src={d.imagen} alt={d.ciudad} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => (e.target.style.background = C.paperAlt)} />
@@ -1294,7 +1315,6 @@ function Destinos({ data, persist, showToast, onVerEnMapa, focusId, onFocusHandl
       </div>
 
       {toDelete && <Confirm text={`¿Eliminar ${toDelete.ciudad}? Esta acción no se puede deshacer.`} onConfirm={eliminar} onCancel={() => setToDelete(null)} />}
-      {marcarViaje && <MarcarViajeModal destino={marcarViaje} persist={persist} showToast={showToast} onClose={() => setMarcarViaje(null)} />}
     </div>
   );
 }
@@ -1507,7 +1527,7 @@ function Field({ label, error, children, grow }) {
   );
 }
 
-function MarcarViajeModal({ destino, persist, showToast, onClose }) {
+function MarcarViajeModal({ destino, persist, showToast, onClose, inline = false }) {
   const [form, setForm] = useState({ fechaInicio: todayISO(), fechaFin: todayISO(), gastoReal: destino.presupuesto, valoracion: 5, notas: "", fotos: "" });
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -1529,7 +1549,7 @@ function MarcarViajeModal({ destino, persist, showToast, onClose }) {
   };
 
   return (
-    <Modal title={`Marcar ${destino.ciudad} como viajado`} onClose={onClose}>
+    <Modal title={`Marcar ${destino.ciudad} como viajado`} onClose={onClose} inline={inline}>
       <div style={{ display: "flex", gap: 12 }}>
         <Field label="Fecha de inicio" grow><input type="date" style={styles.input} value={form.fechaInicio} onChange={(e) => set("fechaInicio", e.target.value)} /></Field>
         <Field label="Fecha de fin" grow><input type="date" style={styles.input} value={form.fechaFin} onChange={(e) => set("fechaFin", e.target.value)} /></Field>

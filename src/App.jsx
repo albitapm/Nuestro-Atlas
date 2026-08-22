@@ -418,22 +418,30 @@ function EmptyState({ icon: Icon, title, text, actionLabel, onAction }) {
   );
 }
 
-function Modal({ title, onClose, children, width = 520 }) {
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(27,42,38,0.55)", zIndex: 80, display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={onClose}>
-      <div
-        className="pop"
-        style={{ background: "#fff", width: "100%", maxWidth: width, maxHeight: "88vh", overflowY: "auto", borderRadius: "22px 22px 0 0", padding: 24, position: "relative" }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
-          <h2 style={{ ...styles.h2, margin: 0 }}>{title}</h2>
-          <button onClick={onClose} style={{ background: C.paperAlt, border: "none", borderRadius: "50%", width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <X size={17} />
-          </button>
-        </div>
-        {children}
+function Modal({ title, onClose, children, width = 520, inline = false }) {
+  const content = (
+    <div
+      className="pop"
+      style={inline
+        ? { background: "#fff", width: "100%", maxWidth: width, maxHeight: "none", overflow: "visible", borderRadius: 22, padding: 24, position: "relative", border: `1px solid ${C.line}`, boxShadow: "0 12px 34px rgba(34,50,44,.12)" }
+        : { background: "#fff", width: "100%", maxWidth: width, maxHeight: "88vh", overflowY: "auto", borderRadius: "22px 22px 0 0", padding: 24, position: "relative" }
+      }
+      onClick={(e) => !inline && e.stopPropagation()}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+        <h2 style={{ ...styles.h2, margin: 0 }}>{title}</h2>
+        <button onClick={onClose} style={{ background: C.paperAlt, border: "none", borderRadius: "50%", width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <X size={17} />
+        </button>
       </div>
+      {children}
+    </div>
+  );
+
+  if (inline) return content;
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(27,42,38,0.55)", zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={onClose}>
+      {content}
     </div>
   );
 }
@@ -921,6 +929,7 @@ function Destinos({ data, persist, showToast, onVerEnMapa, focusId, onFocusHandl
   const [marcarViaje, setMarcarViaje] = useState(null);
   const [filtroEstado, setFiltroEstado] = useState("todos");
   const [saving, setSaving] = useState(false);
+  const formRef = useRef(null);
 
   const visibles = data.destinos.filter((d) => filtroEstado === "todos" || d.estado === filtroEstado);
 
@@ -931,6 +940,14 @@ function Destinos({ data, persist, showToast, onVerEnMapa, focusId, onFocusHandl
     onFocusHandled && onFocusHandled();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusId]);
+
+  useEffect(() => {
+    if (!showForm) return;
+    const id = window.setTimeout(() => {
+      formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+    return () => window.clearTimeout(id);
+  }, [showForm, editing?.id]);
 
   const guardar = async (form) => {
     const needsGeocode = !editing || editing.ciudad !== form.ciudad || editing.pais !== form.pais || editing.lat == null;
@@ -980,49 +997,77 @@ function Destinos({ data, persist, showToast, onVerEnMapa, focusId, onFocusHandl
         <button style={styles.btnPrimary} onClick={() => { setEditing(null); setShowForm(true); }}><Plus size={17} /> Añadir destino</button>
       </div>
 
+      {/* Al añadir, el formulario aparece inmediatamente debajo del encabezado, no al final de la página. */}
+      {showForm && !editing && (
+        <div ref={formRef} style={{ marginBottom: 20 }}>
+          <DestinoForm
+            initial={emptyForm}
+            onCancel={() => { setShowForm(false); setEditing(null); }}
+            onSave={guardar}
+            isEdit={false}
+            saving={saving}
+            inline
+          />
+        </div>
+      )}
+
       <div style={{ display: "flex", gap: 8, marginBottom: 18, flexWrap: "wrap" }}>
-        {[["todos", "Todos"], ["pendiente", "Pendientes"], ["objetivo", "Objetivo"], ["realizado", "Realizados"]].map(([v, l]) => (
+        {[['todos', 'Todos'], ['pendiente', 'Pendientes'], ['objetivo', 'Objetivo'], ['realizado', 'Realizados']].map(([v, l]) => (
           <TabPill key={v} active={filtroEstado === v} onClick={() => setFiltroEstado(v)} label={l} />
         ))}
       </div>
 
       {visibles.length === 0 ? (
-        <EmptyState icon={MapPin} title="Todavía no tenemos destinos guardados" text="Añadamos algunos lugares que nos gustaría conocer." actionLabel="Añadir destino" onAction={() => setShowForm(true)} />
+        <EmptyState icon={MapPin} title="Todavía no tenemos destinos guardados" text="Añadamos algunos lugares que nos gustaría conocer." actionLabel="Añadir destino" onAction={() => { setEditing(null); setShowForm(true); }} />
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px,1fr))", gap: 16 }}>
           {visibles.map((d) => (
-            <div key={d.id} style={{ ...styles.card, padding: 0, overflow: "hidden" }} className="card-hover">
-              <div style={{ position: "relative", height: 140 }}>
-                <img src={d.imagen} alt={d.ciudad} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => (e.target.style.background = C.paperAlt)} />
-                <button onClick={() => toggleFav(d)} style={{ position: "absolute", top: 10, right: 10, background: "rgba(255,255,255,0.85)", border: "none", borderRadius: "50%", width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <Heart size={16} fill={d.favorito ? C.clay : "none"} color={C.clay} />
-                </button>
-                <div style={{ position: "absolute", top: 10, left: 10 }}><EstadoBadge estado={d.estado} /></div>
-              </div>
-              <div style={{ padding: 16 }}>
-                <p style={{ fontFamily: "Fraunces, serif", fontSize: 18, margin: "0 0 2px" }}>{flagEmoji(d.pais)} {d.ciudad}</p>
-                <p style={{ fontSize: 12.5, color: C.inkSoft, margin: "0 0 10px" }}>{d.pais} · {d.dentroPeninsula ? "Dentro de península" : "Fuera de península"}</p>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5, marginBottom: 12 }}>
-                  <span>💶 {eur(d.presupuesto)}</span>
-                  <span>🗓️ {d.duracion} días</span>
+            <React.Fragment key={d.id}>
+              {showForm && editing?.id === d.id && (
+                <div ref={formRef} style={{ gridColumn: "1 / -1" }}>
+                  <DestinoForm
+                    initial={editing}
+                    onCancel={() => { setShowForm(false); setEditing(null); }}
+                    onSave={guardar}
+                    isEdit
+                    saving={saving}
+                    inline
+                  />
                 </div>
-                {d.lat == null && (
-                  <p style={{ fontSize: 11.5, color: C.clay, margin: "0 0 10px", display: "flex", alignItems: "center", gap: 5 }}>
-                    <AlertCircle size={13} /> Sin ubicación en el mapa
-                  </p>
-                )}
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  <button style={{ ...styles.btnGhost, padding: "7px 12px", fontSize: 12.5 }} onClick={() => { setEditing(d); setShowForm(true); }}><Pencil size={13} /> Editar</button>
-                  {d.lat != null && (
-                    <button style={{ ...styles.btnGhost, padding: "7px 12px", fontSize: 12.5 }} onClick={() => onVerEnMapa && onVerEnMapa(d)}><MapIcon size={13} /> Ver en el mapa</button>
+              )}
+              <div style={{ ...styles.card, padding: 0, overflow: "hidden" }} className="card-hover">
+                <div style={{ position: "relative", height: 140 }}>
+                  <img src={d.imagen} alt={d.ciudad} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => (e.target.style.background = C.paperAlt)} />
+                  <button onClick={() => toggleFav(d)} style={{ position: "absolute", top: 10, right: 10, background: "rgba(255,255,255,0.85)", border: "none", borderRadius: "50%", width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <Heart size={16} fill={d.favorito ? C.clay : "none"} color={C.clay} />
+                  </button>
+                  <div style={{ position: "absolute", top: 10, left: 10 }}><EstadoBadge estado={d.estado} /></div>
+                </div>
+                <div style={{ padding: 16 }}>
+                  <p style={{ fontFamily: "Fraunces, serif", fontSize: 18, margin: "0 0 2px" }}>{flagEmoji(d.pais)} {d.ciudad}</p>
+                  <p style={{ fontSize: 12.5, color: C.inkSoft, margin: "0 0 10px" }}>{d.pais} · {d.dentroPeninsula ? "Dentro de península" : "Fuera de península"}</p>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5, marginBottom: 12 }}>
+                    <span>💶 {eur(d.presupuesto)}</span>
+                    <span>🗓️ {d.duracion} días</span>
+                  </div>
+                  {d.lat == null && (
+                    <p style={{ fontSize: 11.5, color: C.clay, margin: "0 0 10px", display: "flex", alignItems: "center", gap: 5 }}>
+                      <AlertCircle size={13} /> Sin ubicación en el mapa
+                    </p>
                   )}
-                  {d.estado !== "realizado" && (
-                    <button style={{ ...styles.btnGhost, padding: "7px 12px", fontSize: 12.5 }} onClick={() => setMarcarViaje(d)}><Plane size={13} /> Marcar viajado</button>
-                  )}
-                  <button style={{ ...styles.btnGhost, padding: "7px 12px", fontSize: 12.5, borderColor: C.clay, color: C.clay }} onClick={() => setToDelete(d)}><Trash2 size={13} /></button>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    <button style={{ ...styles.btnGhost, padding: "7px 12px", fontSize: 12.5 }} onClick={() => { setEditing(d); setShowForm(true); }}><Pencil size={13} /> Editar</button>
+                    {d.lat != null && (
+                      <button style={{ ...styles.btnGhost, padding: "7px 12px", fontSize: 12.5 }} onClick={() => onVerEnMapa && onVerEnMapa(d)}><MapIcon size={13} /> Ver en el mapa</button>
+                    )}
+                    {d.estado !== "realizado" && (
+                      <button style={{ ...styles.btnGhost, padding: "7px 12px", fontSize: 12.5 }} onClick={() => setMarcarViaje(d)}><Plane size={13} /> Marcar viajado</button>
+                    )}
+                    <button style={{ ...styles.btnGhost, padding: "7px 12px", fontSize: 12.5, borderColor: C.clay, color: C.clay }} onClick={() => setToDelete(d)}><Trash2 size={13} /></button>
+                  </div>
                 </div>
               </div>
-            </div>
+            </React.Fragment>
           ))}
         </div>
       )}
@@ -1033,22 +1078,13 @@ function Destinos({ data, persist, showToast, onVerEnMapa, focusId, onFocusHandl
         </button>
       </div>
 
-      {showForm && (
-        <DestinoForm
-          initial={editing || emptyForm}
-          onCancel={() => { setShowForm(false); setEditing(null); }}
-          onSave={guardar}
-          isEdit={!!editing}
-          saving={saving}
-        />
-      )}
       {toDelete && <Confirm text={`¿Eliminar ${toDelete.ciudad}? Esta acción no se puede deshacer.`} onConfirm={eliminar} onCancel={() => setToDelete(null)} />}
       {marcarViaje && <MarcarViajeModal destino={marcarViaje} persist={persist} showToast={showToast} onClose={() => setMarcarViaje(null)} />}
     </div>
   );
 }
 
-function DestinoForm({ initial, onSave, onCancel, isEdit, saving }) {
+function DestinoForm({ initial, onSave, onCancel, isEdit, saving, inline = false }) {
   const [form, setForm] = useState(initial);
   const [errors, setErrors] = useState({});
   const [uploading, setUploading] = useState(false);
@@ -1082,7 +1118,7 @@ function DestinoForm({ initial, onSave, onCancel, isEdit, saving }) {
   };
 
   return (
-    <Modal title={isEdit ? "Editar destino" : "Añadir destino"} onClose={onCancel}>
+    <Modal title={isEdit ? "Editar destino" : "Añadir destino"} onClose={onCancel} inline={inline}>
       <Field label="Ciudad" error={errors.ciudad}>
         <input style={styles.input} value={form.ciudad} onChange={(e) => set("ciudad", e.target.value)} placeholder="Roma" />
       </Field>

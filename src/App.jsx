@@ -939,6 +939,7 @@ function Destinos({ data, persist, showToast, onVerEnMapa, focusId, onFocusHandl
   const [filtroEstado, setFiltroEstado] = useState("todos");
   const [saving, setSaving] = useState(false);
   const formRef = useRef(null);
+  const recomendacionesRef = useRef(null);
 
   const visibles = data.destinos.filter((d) => filtroEstado === "todos" || d.estado === filtroEstado);
 
@@ -957,6 +958,14 @@ function Destinos({ data, persist, showToast, onVerEnMapa, focusId, onFocusHandl
     }, 50);
     return () => window.clearTimeout(id);
   }, [showForm, editing?.id]);
+
+  useEffect(() => {
+    if (!recomendacionesDestinoId) return;
+    const id = window.setTimeout(() => {
+      recomendacionesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+    return () => window.clearTimeout(id);
+  }, [recomendacionesDestinoId]);
 
   const guardar = async (form) => {
     const needsGeocode = !editing || editing.ciudad !== form.ciudad || editing.pais !== form.pais || editing.lat == null;
@@ -1044,6 +1053,19 @@ function Destinos({ data, persist, showToast, onVerEnMapa, focusId, onFocusHandl
                   />
                 </div>
               )}
+
+              {recomendacionesDestinoId === d.id && (
+                <div ref={recomendacionesRef} style={{ gridColumn: "1 / -1", scrollMarginTop: 20 }}>
+                  <RecomendacionesModal
+                    destino={d}
+                    persist={persist}
+                    showToast={showToast}
+                    onClose={() => setRecomendacionesDestinoId(null)}
+                    inline
+                  />
+                </div>
+              )}
+
               <div style={{ ...styles.card, padding: 0, overflow: "hidden" }} className="card-hover">
                 <div style={{ position: "relative", height: 140 }}>
                   <img src={d.imagen} alt={d.ciudad} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => (e.target.style.background = C.paperAlt)} />
@@ -1090,22 +1112,11 @@ function Destinos({ data, persist, showToast, onVerEnMapa, focusId, onFocusHandl
 
       {toDelete && <Confirm text={`¿Eliminar ${toDelete.ciudad}? Esta acción no se puede deshacer.`} onConfirm={eliminar} onCancel={() => setToDelete(null)} />}
       {marcarViaje && <MarcarViajeModal destino={marcarViaje} persist={persist} showToast={showToast} onClose={() => setMarcarViaje(null)} />}
-      {recomendacionesDestinoId && (() => {
-        const destinoActual = data.destinos.find((d) => d.id === recomendacionesDestinoId);
-        return destinoActual ? (
-          <RecomendacionesModal
-            destino={destinoActual}
-            persist={persist}
-            showToast={showToast}
-            onClose={() => setRecomendacionesDestinoId(null)}
-          />
-        ) : null;
-      })()}
     </div>
   );
 }
 
-function RecomendacionesModal({ destino, persist, showToast, onClose }) {
+function RecomendacionesModal({ destino, persist, showToast, onClose, inline = false }) {
   const recomendaciones = destino.recomendaciones || [];
   const [form, setForm] = useState({ titulo: "", categoria: "Visitar", recomendadoPor: "", nota: "", ubicacion: "" });
   const [adding, setAdding] = useState(false);
@@ -1146,7 +1157,7 @@ function RecomendacionesModal({ destino, persist, showToast, onClose }) {
   };
 
   return (
-    <Modal title={`💌 Recomendaciones · ${destino.ciudad}`} onClose={onClose} width={620}>
+    <Modal title={`💌 Recomendaciones · ${destino.ciudad}`} onClose={onClose} width={620} inline={inline}>
       <p style={{ ...styles.sub, marginTop: -8, marginBottom: 18 }}>
         Guardad aquí restaurantes, sitios, actividades o consejos que os hayan recomendado para este destino.
       </p>

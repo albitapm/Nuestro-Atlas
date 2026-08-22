@@ -352,7 +352,7 @@ function GlobalStyle() {
 
 const C = {
   paper: "#F7F2E8", paperAlt: "#EFE7D6", ink: "#22322C", inkSoft: "#5B675F",
-  teal: "#2B6E68", tealDark: "#1E4F4B", amber: "#DD9A3C", clay: "#BE5A3B",
+  teal: "#2B6E68", tealDark: "#1E4F4B", amber: "#DD9A3C", amberSoft: "#F7EEDC", clay: "#BE5A3B",
   line: "rgba(34,50,44,0.12)", night: "#1B2A26",
 };
 
@@ -470,6 +470,147 @@ function Confirm({ text, onConfirm, onCancel }) {
 }
 
 /* ============================================================
+   ¿QUÉ VIAJE NOS PODEMOS PERMITIR?
+============================================================ */
+function ViajePermitido({ data, persist, setTab }) {
+  const [presupuesto, setPresupuesto] = useState(900);
+  const [dias, setDias] = useState(4);
+  const [tipo, setTipo] = useState("todos");
+  const [buscado, setBuscado] = useState(false);
+  const [objetivoCreado, setObjetivoCreado] = useState(null);
+
+  const resultados = useMemo(() => {
+    if (!buscado) return [];
+    const presupuestoNum = Number(presupuesto) || 0;
+    const diasNum = Number(dias) || 0;
+
+    return data.destinos
+      .filter((d) => d.estado !== "realizado")
+      .filter((d) => tipo === "todos" || (tipo === "peninsula" ? d.dentroPeninsula : !d.dentroPeninsula))
+      .filter((d) => Number(d.presupuesto) <= presupuestoNum && Number(d.duracion) <= diasNum)
+      .map((d) => {
+        const coste = Number(d.presupuesto) || 0;
+        const duracion = Number(d.duracion) || 0;
+        const costeRatio = presupuestoNum > 0 ? coste / presupuestoNum : 1;
+        const diasRatio = diasNum > 0 ? duracion / diasNum : 1;
+        // Premia los destinos que aprovechan bien el presupuesto y los días,
+        // sin penalizar demasiado a los viajes más económicos/cortos.
+        const aprovechamiento = ((Math.min(1, costeRatio) * 0.55) + (Math.min(1, diasRatio) * 0.45));
+        const margen = presupuestoNum > 0 ? Math.max(0, 1 - costeRatio) : 0;
+        const score = Math.max(55, Math.min(100, Math.round(70 + aprovechamiento * 25 - margen * 8)));
+        return { ...d, score, margenEuros: Math.max(0, presupuestoNum - coste) };
+      })
+      .sort((a, b) => b.score - a.score || a.presupuesto - b.presupuesto);
+  }, [buscado, presupuesto, dias, tipo, data.destinos]);
+
+  const buscar = () => {
+    const p = Number(presupuesto);
+    const d = Number(dias);
+    if (!p || p <= 0 || !d || d <= 0) return;
+    setObjetivoCreado(null);
+    setBuscado(true);
+  };
+
+  const hacerObjetivo = (destino) => {
+    persist((prev) => ({
+      ...prev,
+      destinos: prev.destinos.map((d) => ({
+        ...d,
+        estado: d.id === destino.id ? "objetivo" : (d.estado === "objetivo" ? "pendiente" : d.estado),
+      })),
+    }));
+    setObjetivoCreado(destino.id);
+  };
+
+  return (
+    <section style={{ ...styles.card, marginBottom: 24, background: `linear-gradient(145deg, #FFFDF8, ${C.paperAlt})`, border: `1px solid ${C.line}` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14, flexWrap: "wrap" }}>
+        <div>
+          <p style={{ ...styles.label, color: C.teal, marginBottom: 5 }}>✨ Buscador inteligente</p>
+          <h2 style={{ ...styles.h2, marginBottom: 5 }}>¿A dónde nos podemos escapar?</h2>
+          <p style={{ ...styles.sub, marginBottom: 0 }}>Dinos cuánto queréis gastar y cuántos días tenéis. Buscaremos entre vuestros destinos.</p>
+        </div>
+        <div style={{ fontSize: 34 }} aria-hidden="true">🧳</div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 12, marginTop: 18 }}>
+        <Field label="💶 Presupuesto disponible">
+          <div style={{ position: "relative" }}>
+            <input type="number" min="1" step="10" inputMode="decimal" value={presupuesto} onChange={(e) => { setPresupuesto(e.target.value); setBuscado(false); }} style={{ ...styles.input, paddingRight: 38 }} placeholder="900" />
+            <span style={{ position: "absolute", right: 12, top: 12, color: C.inkSoft, fontWeight: 700 }}>€</span>
+          </div>
+        </Field>
+        <Field label="🗓️ Días disponibles">
+          <div style={{ position: "relative" }}>
+            <input type="number" min="1" step="1" inputMode="numeric" value={dias} onChange={(e) => { setDias(e.target.value); setBuscado(false); }} style={{ ...styles.input, paddingRight: 52 }} placeholder="4" />
+            <span style={{ position: "absolute", right: 12, top: 12, color: C.inkSoft, fontWeight: 700 }}>días</span>
+          </div>
+        </Field>
+        <Field label="🌍 Tipo de viaje">
+          <select value={tipo} onChange={(e) => { setTipo(e.target.value); setBuscado(false); }} style={styles.input}>
+            <option value="todos">Me da igual</option>
+            <option value="peninsula">Dentro de la península</option>
+            <option value="fuera">Fuera de la península</option>
+          </select>
+        </Field>
+      </div>
+
+      <button style={{ ...styles.btnPrimary, width: "100%", justifyContent: "center", marginTop: 8 }} onClick={buscar}>
+        <Sparkles size={16} /> Encontrar nuestro viaje
+      </button>
+
+      {buscado && (
+        <div style={{ marginTop: 22 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+            <div>
+              <p style={{ margin: 0, fontFamily: "Fraunces, serif", fontSize: 19, fontWeight: 600 }}>
+                {resultados.length ? `✨ ${resultados.length} ${resultados.length === 1 ? "destino encaja" : "destinos encajan"}` : "😕 No encontramos un destino que encaje"}
+              </p>
+              {resultados.length > 0 && <p style={{ margin: "3px 0 0", fontSize: 12.5, color: C.inkSoft }}>Ordenados por compatibilidad con vuestro presupuesto y días.</p>}
+            </div>
+            {resultados.length > 0 && <span style={{ fontSize: 12, color: C.inkSoft }}>{eur(Number(presupuesto))} · {dias} días</span>}
+          </div>
+
+          {resultados.length === 0 ? (
+            <div style={{ background: "#fff", border: `1px dashed ${C.line}`, borderRadius: 14, padding: 18, textAlign: "center" }}>
+              <p style={{ margin: 0, fontFamily: "Fraunces, serif", fontSize: 17 }}>Probemos a ampliar un poquito el presupuesto o los días.</p>
+              <button onClick={() => setTab("destinos")} style={{ ...styles.btnGhost, marginTop: 12 }}>Ver todos nuestros destinos <ArrowRight size={14} /></button>
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
+              {resultados.map((d, index) => (
+                <div key={d.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 16, padding: 12, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                  <img src={d.imagen} alt={d.ciudad} style={{ width: 76, height: 76, borderRadius: 12, objectFit: "cover", flexShrink: 0 }} onError={(e) => { e.currentTarget.style.background = C.paperAlt; }} />
+                  <div style={{ flex: 1, minWidth: 170 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+                      <span style={{ fontFamily: "Fraunces, serif", fontSize: 17, fontWeight: 600 }}>{flagEmoji(d.pais)} {d.ciudad}</span>
+                      {index === 0 && <span style={{ background: C.amberSoft, color: "#6B4A13", borderRadius: 20, padding: "3px 8px", fontSize: 10.5, fontWeight: 800 }}>MEJOR ENCAJE</span>}
+                    </div>
+                    <p style={{ margin: "3px 0 7px", fontSize: 12.5, color: C.inkSoft }}>{d.pais} · {d.duracion} días · {eur(d.presupuesto)}</p>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      <span style={{ background: d.score >= 90 ? "#E5F2E9" : "#F7EEDC", color: d.score >= 90 ? C.tealDark : "#76531A", borderRadius: 20, padding: "4px 8px", fontSize: 11, fontWeight: 700 }}>{d.score}% encaja</span>
+                      <span style={{ background: C.paperAlt, color: C.inkSoft, borderRadius: 20, padding: "4px 8px", fontSize: 11 }}>Os sobran {eur(d.margenEuros)}</span>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    <button style={{ ...styles.btnGhost, padding: "7px 10px", fontSize: 11.5 }} onClick={() => hacerObjetivo(d)} disabled={objetivoCreado === d.id}>
+                      <Heart size={13} fill={objetivoCreado === d.id ? C.clay : "none"} color={C.clay} /> {objetivoCreado === d.id ? "Es nuestro objetivo" : "Hacer objetivo"}
+                    </button>
+                    <button style={{ ...styles.btnGhost, padding: "7px 10px", fontSize: 11.5 }} onClick={() => setTab("ruleta")}>
+                      <RotateCw size={13} /> Ruleta
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* ============================================================
    INICIO / DASHBOARD
 ============================================================ */
 function Inicio({ data, persist, setTab, year }) {
@@ -530,6 +671,9 @@ function Inicio({ data, persist, setTab, year }) {
           {cumplido ? "🎉 ¡Objetivo cumplido! Sois una máquina de viajar." : `${pct}% completado`}
         </p>
       </div>
+
+      {/* Buscador de viaje según presupuesto y días */}
+      <ViajePermitido data={data} persist={persist} setTab={setTab} />
 
       {/* Tarjetas resumen */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px,1fr))", gap: 14, marginBottom: 22 }}>

@@ -525,11 +525,19 @@ function Inicio({ data, persist, setTab, year, onRuletaFiltrada }) {
 
       {/* Objetivo anual */}
       <div style={{ ...styles.card, background: `linear-gradient(135deg, ${C.tealDark}, ${C.teal})`, color: "#fff", marginBottom: 20, position: "relative", overflow: "hidden" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+        <div style={{ position: "absolute", right: -28, top: -38, fontSize: 120, opacity: 0.07, transform: "rotate(-12deg)", pointerEvents: "none" }}>✈️</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, position: "relative" }}>
           <div>
-            <p style={{ fontSize: 12.5, textTransform: "uppercase", letterSpacing: 1, opacity: 0.8, margin: "0 0 6px" }}>Objetivo anual</p>
-            <p style={{ fontFamily: "Fraunces, serif", fontSize: 26, margin: 0, fontWeight: 600 }}>
-              {viajesEsteAnio.length} / {objetivoAnual} viajes realizados
+            <p style={{ fontSize: 12.5, textTransform: "uppercase", letterSpacing: 1, opacity: 0.8, margin: "0 0 6px" }}>Nuestro objetivo de {year}</p>
+            <p style={{ fontFamily: "Fraunces, serif", fontSize: 27, margin: 0, fontWeight: 600 }}>
+              {viajesEsteAnio.length} / {objetivoAnual} viajes
+            </p>
+            <p style={{ fontSize: 13.5, margin: "6px 0 0", opacity: 0.88 }}>
+              {cumplido
+                ? viajesEsteAnio.length > objetivoAnual
+                  ? `🔥 ¡Habéis superado la meta en ${viajesEsteAnio.length - objetivoAnual}!`
+                  : "🎉 ¡Objetivo cumplido! Sois una máquina de viajar."
+                : `Os ${objetivoAnual - viajesEsteAnio.length === 1 ? "falta" : "faltan"} ${objetivoAnual - viajesEsteAnio.length} ${objetivoAnual - viajesEsteAnio.length === 1 ? "viaje" : "viajes"} para conseguirlo.`}
             </p>
           </div>
           {!editObjetivo ? (
@@ -546,9 +554,10 @@ function Inicio({ data, persist, setTab, year, onRuletaFiltrada }) {
         <div style={{ height: 12, background: "rgba(255,255,255,0.2)", borderRadius: 20, marginTop: 16, overflow: "hidden" }}>
           <div style={{ height: "100%", width: `${pct}%`, background: C.amber, borderRadius: 20, transition: "width .6s ease" }} />
         </div>
-        <p style={{ fontSize: 13, marginTop: 8, opacity: 0.9 }}>
-          {cumplido ? "🎉 ¡Objetivo cumplido! Sois una máquina de viajar." : `${pct}% completado`}
-        </p>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginTop: 9, fontSize: 12.5, opacity: 0.9 }}>
+          <span>{Math.min(viajesEsteAnio.length, objetivoAnual)} de {objetivoAnual} completados</span>
+          <span>{pct}%</span>
+        </div>
       </div>
 
       {/* Tarjetas resumen */}
@@ -559,6 +568,29 @@ function Inicio({ data, persist, setTab, year, onRuletaFiltrada }) {
         <StatCard icon="🎯" label="Próximo objetivo" value={destinoObjetivo ? destinoObjetivo.ciudad : "—"} />
         <StatCard icon="💸" label="Gastado este año" value={eur(gastoEsteAnio)} />
       </div>
+
+      {/* Resumen de nuestros viajes del año */}
+      {viajesEsteAnio.length > 0 && (
+        <div style={{ ...styles.card, marginBottom: 22 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 12 }}>
+            <div>
+              <h2 style={{ ...styles.h2, margin: 0 }}>Nuestro {year} viajero</h2>
+              <p style={{ ...styles.sub, margin: "3px 0 0" }}>
+                {viajesEsteAnio.length === 1 ? "Ya tenéis una aventura guardada." : `Ya tenéis ${viajesEsteAnio.length} aventuras guardadas.`}
+              </p>
+            </div>
+            <button style={styles.btnGhost} onClick={() => setTab("viajes")}>Ver viajes</button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px,1fr))", gap: 10 }}>
+            {viajesEsteAnio.slice().sort((a, b) => (a.fechaInicio || "").localeCompare(b.fechaInicio || "")).map((v) => (
+              <div key={v.id} style={{ background: C.paperAlt, borderRadius: 14, padding: "11px 13px", border: `1px solid ${C.line}` }}>
+                <p style={{ margin: 0, fontWeight: 700, fontSize: 14 }}>{flagEmoji(v.pais)} {v.ciudad}</p>
+                <p style={{ margin: "3px 0 0", color: C.inkSoft, fontSize: 12.5 }}>{fmtDate(v.fechaInicio)} · {eur(v.gastoReal || 0)}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <QueViajePodemosPermitirmos data={data} onRuletaFiltrada={onRuletaFiltrada} />
 

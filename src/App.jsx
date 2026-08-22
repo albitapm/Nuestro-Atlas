@@ -164,6 +164,9 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("inicio");
   const [toast, setToast] = useState(null);
+  // Cuando llegamos a la ruleta desde “¿A dónde nos podemos escapar?”,
+  // guardamos temporalmente los IDs que cumplen ese filtro.
+  const [rouletteOverrideIds, setRouletteOverrideIds] = useState(null);
   const dataRef = useRef(null);
 
   useEffect(() => {
@@ -241,7 +244,7 @@ export default function App() {
           {nav.map((n) => (
             <button
               key={n.id}
-              onClick={() => setTab(n.id)}
+              onClick={() => { if (n.id === "ruleta") setRouletteOverrideIds(null); setTab(n.id); }}
               style={{ ...styles.navBtn, ...(tab === n.id ? styles.navBtnActive : {}) }}
             >
               <n.icon size={18} />
@@ -255,8 +258,25 @@ export default function App() {
 
         {/* Contenido */}
         <main style={styles.main}>
-          {tab === "inicio" && <Inicio data={data} persist={persist} setTab={setTab} year={year} />}
-          {tab === "ruleta" && <RuletaPage data={data} persist={persist} showToast={showToast} setTab={setTab} />}
+          {tab === "inicio" && (
+            <Inicio
+              data={data}
+              persist={persist}
+              setTab={setTab}
+              year={year}
+              onRuletaFiltrada={(ids) => { setRouletteOverrideIds(ids); setTab("ruleta"); }}
+            />
+          )}
+          {tab === "ruleta" && (
+            <RuletaPage
+              data={data}
+              persist={persist}
+              showToast={showToast}
+              setTab={setTab}
+              overrideIds={rouletteOverrideIds}
+              clearOverride={() => setRouletteOverrideIds(null)}
+            />
+          )}
           {tab === "destinos" && (
             <Destinos
               data={data} persist={persist} showToast={showToast}
@@ -352,7 +372,7 @@ function GlobalStyle() {
 
 const C = {
   paper: "#F7F2E8", paperAlt: "#EFE7D6", ink: "#22322C", inkSoft: "#5B675F",
-  teal: "#2B6E68", tealDark: "#1E4F4B", amber: "#DD9A3C", amberSoft: "#F7EEDC", clay: "#BE5A3B",
+  teal: "#2B6E68", tealDark: "#1E4F4B", amber: "#DD9A3C", clay: "#BE5A3B",
   line: "rgba(34,50,44,0.12)", night: "#1B2A26",
 };
 
@@ -470,150 +490,9 @@ function Confirm({ text, onConfirm, onCancel }) {
 }
 
 /* ============================================================
-   ¿QUÉ VIAJE NOS PODEMOS PERMITIR?
-============================================================ */
-function ViajePermitido({ data, persist, setTab }) {
-  const [presupuesto, setPresupuesto] = useState(900);
-  const [dias, setDias] = useState(4);
-  const [tipo, setTipo] = useState("todos");
-  const [buscado, setBuscado] = useState(false);
-  const [objetivoCreado, setObjetivoCreado] = useState(null);
-
-  const resultados = useMemo(() => {
-    if (!buscado) return [];
-    const presupuestoNum = Number(presupuesto) || 0;
-    const diasNum = Number(dias) || 0;
-
-    return data.destinos
-      .filter((d) => d.estado !== "realizado")
-      .filter((d) => tipo === "todos" || (tipo === "peninsula" ? d.dentroPeninsula : !d.dentroPeninsula))
-      .filter((d) => Number(d.presupuesto) <= presupuestoNum && Number(d.duracion) <= diasNum)
-      .map((d) => {
-        const coste = Number(d.presupuesto) || 0;
-        const duracion = Number(d.duracion) || 0;
-        const costeRatio = presupuestoNum > 0 ? coste / presupuestoNum : 1;
-        const diasRatio = diasNum > 0 ? duracion / diasNum : 1;
-        // Premia los destinos que aprovechan bien el presupuesto y los días,
-        // sin penalizar demasiado a los viajes más económicos/cortos.
-        const aprovechamiento = ((Math.min(1, costeRatio) * 0.55) + (Math.min(1, diasRatio) * 0.45));
-        const margen = presupuestoNum > 0 ? Math.max(0, 1 - costeRatio) : 0;
-        const score = Math.max(55, Math.min(100, Math.round(70 + aprovechamiento * 25 - margen * 8)));
-        return { ...d, score, margenEuros: Math.max(0, presupuestoNum - coste) };
-      })
-      .sort((a, b) => b.score - a.score || a.presupuesto - b.presupuesto);
-  }, [buscado, presupuesto, dias, tipo, data.destinos]);
-
-  const buscar = () => {
-    const p = Number(presupuesto);
-    const d = Number(dias);
-    if (!p || p <= 0 || !d || d <= 0) return;
-    setObjetivoCreado(null);
-    setBuscado(true);
-  };
-
-  const hacerObjetivo = (destino) => {
-    persist((prev) => ({
-      ...prev,
-      destinos: prev.destinos.map((d) => ({
-        ...d,
-        estado: d.id === destino.id ? "objetivo" : (d.estado === "objetivo" ? "pendiente" : d.estado),
-      })),
-    }));
-    setObjetivoCreado(destino.id);
-  };
-
-  return (
-    <section style={{ ...styles.card, marginBottom: 24, background: `linear-gradient(145deg, #FFFDF8, ${C.paperAlt})`, border: `1px solid ${C.line}` }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14, flexWrap: "wrap" }}>
-        <div>
-          <p style={{ ...styles.label, color: C.teal, marginBottom: 5 }}>✨ Buscador inteligente</p>
-          <h2 style={{ ...styles.h2, marginBottom: 5 }}>¿A dónde nos podemos escapar?</h2>
-          <p style={{ ...styles.sub, marginBottom: 0 }}>Dinos cuánto queréis gastar y cuántos días tenéis. Buscaremos entre vuestros destinos.</p>
-        </div>
-        <div style={{ fontSize: 34 }} aria-hidden="true">🧳</div>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 12, marginTop: 18 }}>
-        <Field label="💶 Presupuesto disponible">
-          <div style={{ position: "relative" }}>
-            <input type="number" min="1" step="10" inputMode="decimal" value={presupuesto} onChange={(e) => { setPresupuesto(e.target.value); setBuscado(false); }} style={{ ...styles.input, paddingRight: 38 }} placeholder="900" />
-            <span style={{ position: "absolute", right: 12, top: 12, color: C.inkSoft, fontWeight: 700 }}>€</span>
-          </div>
-        </Field>
-        <Field label="🗓️ Días disponibles">
-          <div style={{ position: "relative" }}>
-            <input type="number" min="1" step="1" inputMode="numeric" value={dias} onChange={(e) => { setDias(e.target.value); setBuscado(false); }} style={{ ...styles.input, paddingRight: 52 }} placeholder="4" />
-            <span style={{ position: "absolute", right: 12, top: 12, color: C.inkSoft, fontWeight: 700 }}>días</span>
-          </div>
-        </Field>
-        <Field label="🌍 Tipo de viaje">
-          <select value={tipo} onChange={(e) => { setTipo(e.target.value); setBuscado(false); }} style={styles.input}>
-            <option value="todos">Me da igual</option>
-            <option value="peninsula">Dentro de la península</option>
-            <option value="fuera">Fuera de la península</option>
-          </select>
-        </Field>
-      </div>
-
-      <button style={{ ...styles.btnPrimary, width: "100%", justifyContent: "center", marginTop: 8 }} onClick={buscar}>
-        <Sparkles size={16} /> Encontrar nuestro viaje
-      </button>
-
-      {buscado && (
-        <div style={{ marginTop: 22 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-            <div>
-              <p style={{ margin: 0, fontFamily: "Fraunces, serif", fontSize: 19, fontWeight: 600 }}>
-                {resultados.length ? `✨ ${resultados.length} ${resultados.length === 1 ? "destino encaja" : "destinos encajan"}` : "😕 No encontramos un destino que encaje"}
-              </p>
-              {resultados.length > 0 && <p style={{ margin: "3px 0 0", fontSize: 12.5, color: C.inkSoft }}>Ordenados por compatibilidad con vuestro presupuesto y días.</p>}
-            </div>
-            {resultados.length > 0 && <span style={{ fontSize: 12, color: C.inkSoft }}>{eur(Number(presupuesto))} · {dias} días</span>}
-          </div>
-
-          {resultados.length === 0 ? (
-            <div style={{ background: "#fff", border: `1px dashed ${C.line}`, borderRadius: 14, padding: 18, textAlign: "center" }}>
-              <p style={{ margin: 0, fontFamily: "Fraunces, serif", fontSize: 17 }}>Probemos a ampliar un poquito el presupuesto o los días.</p>
-              <button onClick={() => setTab("destinos")} style={{ ...styles.btnGhost, marginTop: 12 }}>Ver todos nuestros destinos <ArrowRight size={14} /></button>
-            </div>
-          ) : (
-            <div style={{ display: "grid", gap: 10 }}>
-              {resultados.map((d, index) => (
-                <div key={d.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 16, padding: 12, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                  <img src={d.imagen} alt={d.ciudad} style={{ width: 76, height: 76, borderRadius: 12, objectFit: "cover", flexShrink: 0 }} onError={(e) => { e.currentTarget.style.background = C.paperAlt; }} />
-                  <div style={{ flex: 1, minWidth: 170 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
-                      <span style={{ fontFamily: "Fraunces, serif", fontSize: 17, fontWeight: 600 }}>{flagEmoji(d.pais)} {d.ciudad}</span>
-                      {index === 0 && <span style={{ background: C.amberSoft, color: "#6B4A13", borderRadius: 20, padding: "3px 8px", fontSize: 10.5, fontWeight: 800 }}>MEJOR ENCAJE</span>}
-                    </div>
-                    <p style={{ margin: "3px 0 7px", fontSize: 12.5, color: C.inkSoft }}>{d.pais} · {d.duracion} días · {eur(d.presupuesto)}</p>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      <span style={{ background: d.score >= 90 ? "#E5F2E9" : "#F7EEDC", color: d.score >= 90 ? C.tealDark : "#76531A", borderRadius: 20, padding: "4px 8px", fontSize: 11, fontWeight: 700 }}>{d.score}% encaja</span>
-                      <span style={{ background: C.paperAlt, color: C.inkSoft, borderRadius: 20, padding: "4px 8px", fontSize: 11 }}>Os sobran {eur(d.margenEuros)}</span>
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    <button style={{ ...styles.btnGhost, padding: "7px 10px", fontSize: 11.5 }} onClick={() => hacerObjetivo(d)} disabled={objetivoCreado === d.id}>
-                      <Heart size={13} fill={objetivoCreado === d.id ? C.clay : "none"} color={C.clay} /> {objetivoCreado === d.id ? "Es nuestro objetivo" : "Hacer objetivo"}
-                    </button>
-                    <button style={{ ...styles.btnGhost, padding: "7px 10px", fontSize: 11.5 }} onClick={() => setTab("ruleta")}>
-                      <RotateCw size={13} /> Ruleta
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-    </section>
-  );
-}
-
-/* ============================================================
    INICIO / DASHBOARD
 ============================================================ */
-function Inicio({ data, persist, setTab, year }) {
+function Inicio({ data, persist, setTab, year, onRuletaFiltrada }) {
   const objetivoAnual = data.objetivosAnuales[year] ?? 3;
   const viajesEsteAnio = data.viajes.filter((v) => v.year === year);
   const pct = Math.min(100, Math.round((viajesEsteAnio.length / objetivoAnual) * 100));
@@ -672,9 +551,6 @@ function Inicio({ data, persist, setTab, year }) {
         </p>
       </div>
 
-      {/* Buscador de viaje según presupuesto y días */}
-      <ViajePermitido data={data} persist={persist} setTab={setTab} />
-
       {/* Tarjetas resumen */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px,1fr))", gap: 14, marginBottom: 22 }}>
         <StatCard icon="✈️" label="Viajes" value={`${viajesEsteAnio.length} / ${objetivoAnual}`} />
@@ -683,6 +559,8 @@ function Inicio({ data, persist, setTab, year }) {
         <StatCard icon="🎯" label="Próximo objetivo" value={destinoObjetivo ? destinoObjetivo.ciudad : "—"} />
         <StatCard icon="💸" label="Gastado este año" value={eur(gastoEsteAnio)} />
       </div>
+
+      <QueViajePodemosPermitirmos data={data} onRuletaFiltrada={onRuletaFiltrada} />
 
       {/* Objetivo activo */}
       <h2 style={styles.h2}>Nuestro próximo viaje</h2>
@@ -698,6 +576,123 @@ function Inicio({ data, persist, setTab, year }) {
         />
       )}
     </div>
+  );
+}
+
+function QueViajePodemosPermitirmos({ data, onRuletaFiltrada }) {
+  const destinosDisponibles = data.destinos.filter((d) => d.estado !== "realizado");
+  const presupuestos = destinosDisponibles.map((d) => Number(d.presupuesto) || 0).filter(Boolean);
+  const maxPresupuesto = presupuestos.length ? Math.max(...presupuestos) : 1000;
+  const [presupuesto, setPresupuesto] = useState(maxPresupuesto);
+  const [dias, setDias] = useState(4);
+  const [geo, setGeo] = useState("todos");
+  const [buscado, setBuscado] = useState(false);
+
+  useEffect(() => {
+    setPresupuesto(maxPresupuesto);
+  }, [maxPresupuesto]);
+
+  const resultados = useMemo(() => {
+    if (!buscado) return [];
+    const presupuestoMax = Number(presupuesto) || 0;
+    const diasMax = Number(dias) || 0;
+    return destinosDisponibles
+      .filter((d) => {
+        if ((Number(d.presupuesto) || 0) > presupuestoMax) return false;
+        if (diasMax > 0 && (Number(d.duracion) || 0) > diasMax) return false;
+        if (geo === "peninsula" && !d.dentroPeninsula) return false;
+        if (geo === "fuera" && d.dentroPeninsula) return false;
+        return true;
+      })
+      .map((d) => {
+        const coste = Number(d.presupuesto) || 0;
+        const ahorro = presupuestoMax > 0 ? Math.max(0, Math.round(((presupuestoMax - coste) / presupuestoMax) * 100)) : 0;
+        const margenDias = diasMax > 0 ? Math.max(0, Math.round(((diasMax - (Number(d.duracion) || 0)) / diasMax) * 100)) : 0;
+        const compatibilidad = Math.min(100, Math.round(60 + ahorro * 0.25 + margenDias * 0.15));
+        return { ...d, compatibilidad };
+      })
+      .sort((a, b) => b.compatibilidad - a.compatibilidad || a.presupuesto - b.presupuesto);
+  }, [buscado, destinosDisponibles, presupuesto, dias, geo]);
+
+  return (
+    <section style={{ ...styles.card, marginBottom: 22, background: "linear-gradient(145deg, #fff, #FBF7EE)", border: `1px solid ${C.line}` }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <p style={{ margin: 0, color: C.teal, fontSize: 12.5, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>✨ Para nuestra próxima escapada</p>
+          <h2 style={{ ...styles.h2, margin: "5px 0 4px" }}>¿A dónde nos podemos escapar?</h2>
+          <p style={{ ...styles.sub, margin: 0 }}>Dinos presupuesto, días y zona. Buscaremos entre vuestros destinos.</p>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginTop: 18 }}>
+        <label style={styles.label}>
+          💶 Presupuesto máximo
+          <div style={{ position: "relative", marginTop: 6 }}>
+            <input type="number" min="0" step="50" value={presupuesto} onChange={(e) => { setPresupuesto(e.target.value); setBuscado(false); }} style={{ ...styles.input, paddingRight: 36 }} />
+            <span style={{ position: "absolute", right: 11, top: 11, color: C.inkSoft, fontSize: 13 }}>€</span>
+          </div>
+        </label>
+        <label style={styles.label}>
+          🗓️ Días disponibles
+          <div style={{ position: "relative", marginTop: 6 }}>
+            <input type="number" min="1" step="1" value={dias} onChange={(e) => { setDias(e.target.value); setBuscado(false); }} style={{ ...styles.input, paddingRight: 48 }} />
+            <span style={{ position: "absolute", right: 11, top: 11, color: C.inkSoft, fontSize: 13 }}>días</span>
+          </div>
+        </label>
+        <label style={styles.label}>
+          🌍 ¿Dónde?
+          <select value={geo} onChange={(e) => { setGeo(e.target.value); setBuscado(false); }} style={{ ...styles.input, marginTop: 6 }}>
+            <option value="todos">Me da igual</option>
+            <option value="peninsula">Dentro de la península</option>
+            <option value="fuera">Fuera de la península</option>
+          </select>
+        </label>
+      </div>
+
+      <button onClick={() => setBuscado(true)} style={{ ...styles.btnPrimary, width: "100%", justifyContent: "center", marginTop: 15 }}>
+        <Sparkles size={16} /> Encontrar nuestro viaje
+      </button>
+
+      {buscado && (
+        <div style={{ marginTop: 18 }} className="fade-up">
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+            <div>
+              <p style={{ margin: 0, fontFamily: "Fraunces, serif", fontSize: 20, fontWeight: 600 }}>
+                {resultados.length ? `✨ ${resultados.length} destino${resultados.length !== 1 ? "s" : ""} encaja${resultados.length !== 1 ? "n" : ""}` : "😕 No encontramos un destino"}
+              </p>
+              <p style={{ margin: "3px 0 0", color: C.inkSoft, fontSize: 12.5 }}>
+                {resultados.length ? "Estos son los destinos que cumplen vuestro filtro." : "Prueba a aumentar el presupuesto o los días."}
+              </p>
+            </div>
+            {resultados.length > 0 && (
+              <button
+                onClick={() => onRuletaFiltrada(resultados.map((d) => d.id))}
+                style={{ ...styles.btnPrimary, background: C.amber, color: "#3A2A0E" }}
+              >
+                🎰 Que decida la ruleta
+              </button>
+            )}
+          </div>
+
+          {resultados.length > 0 && (
+            <div style={{ display: "grid", gap: 10 }}>
+              {resultados.map((d, index) => (
+                <div key={d.id} style={{ display: "flex", gap: 12, alignItems: "center", padding: 10, border: `1px solid ${C.line}`, borderRadius: 14, background: "#fff" }}>
+                  <img src={d.imagen} alt="" style={{ width: 58, height: 58, borderRadius: 11, objectFit: "cover", flexShrink: 0 }} onError={(e) => (e.target.style.display = "none")} />
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+                      <strong style={{ fontFamily: "Fraunces, serif", fontSize: 17 }}>{index === 0 ? "🏆 " : ""}{flagEmoji(d.pais)} {d.ciudad}</strong>
+                      <span style={{ fontSize: 11.5, fontWeight: 700, color: C.teal, background: "#E9F3EF", borderRadius: 12, padding: "3px 7px" }}>{d.compatibilidad}% encaja</span>
+                    </div>
+                    <div style={{ color: C.inkSoft, fontSize: 12.5, marginTop: 3 }}>{eur(d.presupuesto)} · {d.duracion} días · {d.dentroPeninsula ? "Península" : "Fuera"}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -745,7 +740,7 @@ function useFilters(destinos, { includeObjetivo = true } = {}) {
   return { disponibles, minGlobal, maxGlobal };
 }
 
-function RuletaPage({ data, persist, showToast, setTab }) {
+function RuletaPage({ data, persist, showToast, setTab, overrideIds, clearOverride }) {
   const [sub, setSub] = useState("ruleta");
   return (
     <div className="fade-up">
@@ -756,7 +751,7 @@ function RuletaPage({ data, persist, showToast, setTab }) {
         <TabPill active={sub === "sorpresa"} onClick={() => setSub("sorpresa")} label="✨ Sorpréndenos" />
       </div>
       {sub === "ruleta"
-        ? <Ruleta data={data} persist={persist} showToast={showToast} setTab={setTab} />
+        ? <Ruleta data={data} persist={persist} showToast={showToast} setTab={setTab} overrideIds={overrideIds} clearOverride={clearOverride} />
         : <Sorprendenos data={data} persist={persist} showToast={showToast} setTab={setTab} />}
     </div>
   );
@@ -773,8 +768,11 @@ function TabPill({ active, onClick, label }) {
   );
 }
 
-function Ruleta({ data, persist, showToast, setTab }) {
-  const { disponibles, minGlobal, maxGlobal } = useFilters(data.destinos);
+function Ruleta({ data, persist, showToast, setTab, overrideIds, clearOverride }) {
+  const { disponibles: todosDisponibles, minGlobal: allMinGlobal, maxGlobal: allMaxGlobal } = useFilters(data.destinos);
+  const disponibles = overrideIds ? todosDisponibles.filter((d) => overrideIds.includes(d.id)) : todosDisponibles;
+  const minGlobal = disponibles.length ? Math.min(...disponibles.map((d) => Number(d.presupuesto) || 0)) : allMinGlobal;
+  const maxGlobal = disponibles.length ? Math.max(...disponibles.map((d) => Number(d.presupuesto) || 0)) : allMaxGlobal;
   const [minB, setMinB] = useState(minGlobal);
   const [maxB, setMaxB] = useState(maxGlobal);
   const [geo, setGeo] = useState("todos");
@@ -830,6 +828,15 @@ function Ruleta({ data, persist, showToast, setTab }) {
 
   return (
     <div>
+      {overrideIds && (
+        <div style={{ ...styles.card, marginBottom: 14, background: "#FFF8E8", border: `1px solid ${C.amber}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+          <div>
+            <strong style={{ fontFamily: "Fraunces, serif", fontSize: 17 }}>💰 Ruleta con vuestro filtro</strong>
+            <p style={{ margin: "3px 0 0", color: C.inkSoft, fontSize: 12.5 }}>Solo participan los destinos que encajaron en “¿A dónde nos podemos escapar?”.</p>
+          </div>
+          <button onClick={clearOverride} style={{ ...styles.btnGhost, whiteSpace: "nowrap" }}>Ver todos los destinos</button>
+        </div>
+      )}
       <FiltrosPanel {...{ minB, setMinB, maxB, setMaxB, minGlobal, maxGlobal, geo, setGeo, soloFav, setSoloFav, soloPendientes, setSoloPendientes }} />
 
       <p style={{ textAlign: "center", color: C.inkSoft, fontSize: 14, margin: "18px 0 4px" }}>

@@ -94,6 +94,15 @@ function migrateData(d) {
     });
     d.version = 2;
   }
+  // Diario de viajes: campos opcionales para que los viajes antiguos sigan funcionando.
+  d.viajes = (d.viajes || []).map((v) => ({
+    ...v,
+    fotos: Array.isArray(v.fotos) ? v.fotos : [],
+    momentoFavorito: v.momentoFavorito || "",
+    recuerdo: v.recuerdo || "",
+    volveriamos: v.volveriamos || "si",
+  }));
+  d.version = Math.max(d.version || 2, 3);
   return d;
 }
 
@@ -1528,7 +1537,7 @@ function Field({ label, error, children, grow }) {
 }
 
 function MarcarViajeModal({ destino, persist, showToast, onClose, inline = false }) {
-  const [form, setForm] = useState({ fechaInicio: todayISO(), fechaFin: todayISO(), gastoReal: destino.presupuesto, valoracion: 5, notas: "", fotos: "" });
+  const [form, setForm] = useState({ fechaInicio: todayISO(), fechaFin: todayISO(), gastoReal: destino.presupuesto, valoracion: 5, notas: "", fotos: [], recuerdo: "", momentoFavorito: "", volveriamos: "si" });
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
   const guardar = () => {
@@ -1537,7 +1546,7 @@ function MarcarViajeModal({ destino, persist, showToast, onClose, inline = false
       id: uid(), destinoId: destino.id, ciudad: destino.ciudad, pais: destino.pais, imagen: destino.imagen,
       fechaInicio: form.fechaInicio, fechaFin: form.fechaFin, presupuestoEstimado: destino.presupuesto,
       gastoReal: Number(form.gastoReal) || 0, valoracion: Number(form.valoracion),
-      notas: form.notas, fotos: form.fotos.split(",").map((s) => s.trim()).filter(Boolean), year,
+      notas: form.notas, fotos: form.fotos, recuerdo: form.recuerdo, momentoFavorito: form.momentoFavorito, volveriamos: form.volveriamos, year,
     };
     persist((prev) => ({
       ...prev,
@@ -1564,9 +1573,27 @@ function MarcarViajeModal({ destino, persist, showToast, onClose, inline = false
           ))}
         </div>
       </Field>
-      <Field label="Notas del viaje"><textarea style={{ ...styles.input, minHeight: 80 }} value={form.notas} onChange={(e) => set("notas", e.target.value)} placeholder="¿Qué tal fue?" /></Field>
-      <Field label="Fotos (URLs separadas por comas)"><input style={styles.input} value={form.fotos} onChange={(e) => set("fotos", e.target.value)} placeholder="https://…, https://…" /></Field>
-      <button style={{ ...styles.btnPrimary, width: "100%", justifyContent: "center", marginTop: 6 }} onClick={guardar}>Guardar viaje realizado</button>
+      <Field label="Una frase para recordar este viaje"><input style={styles.input} value={form.recuerdo} onChange={(e) => set("recuerdo", e.target.value)} placeholder="El viaje en el que…" /></Field>
+      <Field label="✨ Nuestro momento favorito"><textarea style={{ ...styles.input, minHeight: 70 }} value={form.momentoFavorito} onChange={(e) => set("momentoFavorito", e.target.value)} placeholder="Ese momento que volveríamos a vivir…" /></Field>
+      <Field label="📖 Nuestra historia"><textarea style={{ ...styles.input, minHeight: 90 }} value={form.notas} onChange={(e) => set("notas", e.target.value)} placeholder="¿Qué queremos recordar de este viaje?" /></Field>
+      <Field label="¿Volveríamos?">
+        <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+          <TabPill active={form.volveriamos === "si"} onClick={() => set("volveriamos", "si")} label="Sí ♥" />
+          <TabPill active={form.volveriamos === "talvez"} onClick={() => set("volveriamos", "talvez")} label="Quizá" />
+          <TabPill active={form.volveriamos === "no"} onClick={() => set("volveriamos", "no")} label="No" />
+        </div>
+      </Field>
+      <Field label="📸 Fotos del viaje">
+        <input id={`trip-files-${destino.id}`} type="file" accept="image/*" multiple onChange={async (e) => {
+          const files = Array.from(e.target.files || []);
+          try { const fotos = []; for (const file of files.slice(0, 12)) fotos.push(await resizeImage(file, 1000, 0.82)); setForm((f) => ({ ...f, fotos: [...f.fotos, ...fotos].slice(0, 24) })); }
+          catch (err) { console.error(err); }
+          e.target.value = "";
+        }} style={{ position: "absolute", width: 1, height: 1, opacity: 0 }} />
+        <label htmlFor={`trip-files-${destino.id}`} style={{ ...styles.btnGhost, width: "100%", justifyContent: "center" }}><Camera size={16} /> Añadir fotos desde el móvil</label>
+        {form.fotos.length > 0 && <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 7, marginTop: 10 }}>{form.fotos.map((f, i) => <div key={i} style={{ position: "relative" }}><img src={f} alt="" style={{ width: "100%", aspectRatio: "1", objectFit: "cover", borderRadius: 9 }} /><button onClick={() => set("fotos", form.fotos.filter((_, idx) => idx !== i))} style={{ position: "absolute", top: 4, right: 4, width: 24, height: 24, borderRadius: "50%", border: "none", background: "rgba(255,255,255,.9)", display: "flex", alignItems: "center", justifyContent: "center" }}><X size={13} /></button></div>)}</div>}
+      </Field>
+      <button style={{ ...styles.btnPrimary, width: "100%", justifyContent: "center", marginTop: 6 }} onClick={guardar}>Guardar nuestro recuerdo ♥</button>
     </Modal>
   );
 }
@@ -1913,72 +1940,253 @@ function AportacionForm({ onSave, onCancel }) {
 /* ============================================================
    VIAJES REALIZADOS
 ============================================================ */
-function ViajesRealizados({ data, showToast }) {
+function ViajesRealizados({ data, persist, showToast }) {
   const [detalle, setDetalle] = useState(null);
+  const [editando, setEditando] = useState(null);
   const porAnio = useMemo(() => {
     const m = {};
     data.viajes.forEach((v) => { (m[v.year] = m[v.year] || []).push(v); });
     return Object.entries(m).sort((a, b) => b[0] - a[0]);
   }, [data.viajes]);
 
+  const abrir = (v) => setDetalle(v);
+
   return (
     <div className="fade-up">
-      <h1 style={styles.h1}>✈️ Nuestros viajes</h1>
-      <p style={{ ...styles.sub, marginBottom: 20 }}>El álbum de todo lo que ya habéis vivido juntos.</p>
+      <div style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 28px" }}>
+        <div style={{ fontSize: 30, marginBottom: 6 }}>♡ ✈️ ♡</div>
+        <h1 style={{ ...styles.h1, fontSize: 34 }}>Nuestro diario de viajes</h1>
+        <p style={{ ...styles.sub, fontStyle: "italic", fontFamily: "Fraunces, serif", fontSize: 16 }}>
+          Lugares que visitamos, momentos que guardamos y recuerdos que son solo nuestros.
+        </p>
+      </div>
 
       {data.viajes.length === 0 ? (
-        <EmptyState icon={Plane} title="Todavía no habéis registrado ningún viaje" text="Cuando volváis de un viaje, marcadlo como realizado desde Destinos para guardarlo aquí." />
+        <EmptyState icon={Heart} title="Todavía no hay recuerdos aquí" text="Cuando volváis de un viaje, guardadlo como realizado y empezaremos a escribir vuestra historia." />
       ) : (
         porAnio.map(([year, viajes]) => (
-          <div key={year} style={{ marginBottom: 26 }}>
-            <h2 style={styles.h2}>{year}</h2>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px,1fr))", gap: 16 }}>
-              {viajes.map((v) => (
-                <div key={v.id} style={{ ...styles.card, padding: 0, overflow: "hidden", cursor: "pointer" }} className="card-hover" onClick={() => setDetalle(v)}>
-                  <img src={v.imagen} alt={v.ciudad} style={{ width: "100%", height: 140, objectFit: "cover" }} onError={(e) => (e.target.style.display = "none")} />
-                  <div style={{ padding: 16 }}>
-                    <p style={{ fontFamily: "Fraunces, serif", fontSize: 18, margin: "0 0 2px" }}>{flagEmoji(v.pais)} {v.ciudad}</p>
-                    <p style={{ fontSize: 12.5, color: C.inkSoft, margin: "0 0 8px" }}>{fmtDate(v.fechaInicio)} — {fmtDate(v.fechaFin)}</p>
-                    <p style={{ fontSize: 13, margin: "0 0 6px" }}>Presupuesto estimado: {eur(v.presupuestoEstimado)}</p>
-                    <p style={{ fontSize: 13, margin: "0 0 8px" }}>Gasto real: {eur(v.gastoReal)}</p>
-                    <div>{"⭐️".repeat(v.valoracion)}</div>
+          <div key={year} style={{ marginBottom: 30 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+              <div style={{ height: 1, flex: 1, background: C.line }} />
+              <h2 style={{ ...styles.h2, margin: 0, whiteSpace: "nowrap" }}>✦ {year} ✦</h2>
+              <div style={{ height: 1, flex: 1, background: C.line }} />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(270px,1fr))", gap: 18 }}>
+              {viajes.map((v) => {
+                const fotos = Array.isArray(v.fotos) ? v.fotos : [];
+                const dias = Math.max(1, Math.round((new Date(v.fechaFin) - new Date(v.fechaInicio)) / 86400000) + 1);
+                const diferencia = (Number(v.gastoReal) || 0) - (Number(v.presupuestoEstimado) || 0);
+                return (
+                  <div key={v.id} style={{ ...styles.card, padding: 0, overflow: "hidden", cursor: "pointer", position: "relative" }} className="card-hover" onClick={() => abrir(v)}>
+                    <div style={{ position: "relative", height: 205, overflow: "hidden" }}>
+                      <img src={v.imagen} alt={v.ciudad} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => (e.target.style.display = "none")} />
+                      <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0.02) 35%, rgba(27,42,38,0.78) 100%)" }} />
+                      <div style={{ position: "absolute", left: 16, right: 16, bottom: 14, color: "#fff" }}>
+                        <p style={{ fontFamily: "Fraunces, serif", fontSize: 25, margin: 0 }}>{flagEmoji(v.pais)} {v.ciudad}</p>
+                        <p style={{ fontSize: 12.5, margin: "3px 0 0", opacity: .9 }}>{fmtDate(v.fechaInicio)} — {fmtDate(v.fechaFin)} · {dias} {dias === 1 ? "día" : "días"}</p>
+                      </div>
+                      <div style={{ position: "absolute", top: 12, right: 12, background: "rgba(255,255,255,.9)", color: C.clay, borderRadius: 30, padding: "5px 9px", fontSize: 12, fontWeight: 700 }}>
+                        {"♥"} {v.valoracion || 0}/5
+                      </div>
+                    </div>
+                    <div style={{ padding: 16 }}>
+                      <p style={{ margin: "0 0 10px", fontFamily: "Fraunces, serif", fontSize: 16, color: C.tealDark }}>
+                        {v.recuerdo ? `“${v.recuerdo}”` : "Un recuerdo que todavía está por escribir…"}
+                      </p>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                        <span style={styles.badge(C.paperAlt, C.inkSoft)}>📸 {fotos.length} {fotos.length === 1 ? "foto" : "fotos"}</span>
+                        <span style={styles.badge(C.paperAlt, C.inkSoft)}>💶 {eur(v.gastoReal)}</span>
+                        {diferencia <= 0 && <span style={styles.badge("#DCEEE9", C.tealDark)}>Ahorramos {eur(Math.abs(diferencia))}</span>}
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                        <span style={{ color: C.amber, fontSize: 15 }}>{"★".repeat(v.valoracion || 0)}{"☆".repeat(5 - (v.valoracion || 0))}</span>
+                        <button onClick={(e) => { e.stopPropagation(); setEditando(v); }} style={styles.btnGhost}>Editar recuerdos</button>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         ))
       )}
 
-      {detalle && <ViajeDetalle viaje={detalle} onClose={() => setDetalle(null)} />}
+      {detalle && <ViajeDetalle viaje={detalle} onClose={() => setDetalle(null)} onEdit={() => { setEditando(detalle); setDetalle(null); }} />}
+      {editando && (
+        <EditarDiario viaje={editando} persist={persist} showToast={showToast} onClose={() => setEditando(null)} />
+      )}
     </div>
   );
 }
 
-function ViajeDetalle({ viaje, onClose }) {
+function ViajeDetalle({ viaje, onClose, onEdit }) {
+  const fotos = Array.isArray(viaje.fotos) ? viaje.fotos : [];
+  const diferencia = (Number(viaje.gastoReal) || 0) - (Number(viaje.presupuestoEstimado) || 0);
+  const dias = Math.max(1, Math.round((new Date(viaje.fechaFin) - new Date(viaje.fechaInicio)) / 86400000) + 1);
   return (
-    <Modal title={`${flagEmoji(viaje.pais)} ${viaje.ciudad}`} onClose={onClose} width={600}>
-      <p style={{ color: C.inkSoft, fontSize: 13.5, marginTop: -8, marginBottom: 16 }}>
-        {fmtDate(viaje.fechaInicio)} — {fmtDate(viaje.fechaFin)} · {"⭐️".repeat(viaje.valoracion)}
-      </p>
-      <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 18 }}>
-        <div><p style={styles.label}>Presupuesto estimado</p><p style={{ fontWeight: 700 }}>{eur(viaje.presupuestoEstimado)}</p></div>
-        <div><p style={styles.label}>Gasto real</p><p style={{ fontWeight: 700 }}>{eur(viaje.gastoReal)}</p></div>
+    <Modal title={`${flagEmoji(viaje.pais)} ${viaje.ciudad}`} onClose={onClose} width={680}>
+      <div style={{ borderRadius: 18, overflow: "hidden", position: "relative", height: 220, marginBottom: 18 }}>
+        <img src={viaje.imagen} alt={viaje.ciudad} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => (e.target.style.display = "none")} />
+        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, transparent 35%, rgba(27,42,38,.8))" }} />
+        <div style={{ position: "absolute", bottom: 16, left: 18, color: "#fff" }}>
+          <div style={{ fontFamily: "Fraunces, serif", fontSize: 28 }}>{flagEmoji(viaje.pais)} {viaje.ciudad}</div>
+          <div style={{ fontSize: 12.5, opacity: .9 }}>{fmtDate(viaje.fechaInicio)} — {fmtDate(viaje.fechaFin)} · {dias} días</div>
+        </div>
       </div>
-      <p style={styles.label}>📝 Notas del viaje</p>
-      <p style={{ fontSize: 14.5, lineHeight: 1.6, color: C.ink, background: C.paperAlt, padding: 14, borderRadius: 12 }}>
-        {viaje.notas || "Sin notas todavía."}
+
+      <div style={{ textAlign: "center", padding: "2px 10px 18px" }}>
+        <div style={{ color: C.amber, fontSize: 18, letterSpacing: 2 }}>{"★".repeat(viaje.valoracion || 0)}{"☆".repeat(5 - (viaje.valoracion || 0))}</div>
+        <p style={{ fontFamily: "Fraunces, serif", fontSize: 20, lineHeight: 1.45, margin: "10px auto 0", maxWidth: 560 }}>
+          {viaje.recuerdo ? `“${viaje.recuerdo}”` : "Hay viajes que se terminan, pero se quedan a vivir en nosotros."}
+        </p>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 10, marginBottom: 18 }}>
+        <MiniMemory label="Días" value={dias} />
+        <MiniMemory label="Gastado" value={eur(viaje.gastoReal)} />
+        <MiniMemory label="Presupuesto" value={eur(viaje.presupuestoEstimado)} />
+        <MiniMemory label="Volveríamos" value={viaje.volveriamos === "no" ? "No" : viaje.volveriamos === "talvez" ? "Quizá" : "Sí ♥"} />
+      </div>
+
+      {viaje.momentoFavorito && (
+        <div style={{ ...styles.card, background: "linear-gradient(135deg,#fff8ee,#f7f2e8)", marginBottom: 16, textAlign: "center" }}>
+          <div style={{ fontSize: 20, marginBottom: 4 }}>✨</div>
+          <p style={styles.label}>Nuestro momento favorito</p>
+          <p style={{ margin: 0, fontFamily: "Fraunces, serif", fontSize: 17, lineHeight: 1.5 }}>{viaje.momentoFavorito}</p>
+        </div>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 8 }}>
+        <p style={{ ...styles.label, margin: 0 }}>📖 Nuestra historia</p>
+        {onEdit && <button style={styles.btnGhost} onClick={onEdit}><Pencil size={14} /> Editar</button>}
+      </div>
+      <p style={{ fontSize: 14.5, lineHeight: 1.7, color: C.ink, background: C.paperAlt, padding: 14, borderRadius: 12, marginTop: 0 }}>
+        {viaje.notas || "Todavía no habéis escrito vuestra historia para este viaje."}
       </p>
-      <p style={{ ...styles.label, marginTop: 16 }}>📸 Nuestros recuerdos</p>
-      {viaje.fotos && viaje.fotos.length > 0 ? (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px,1fr))", gap: 8 }}>
-          {viaje.fotos.map((f, i) => (
-            <img key={i} src={f} alt="" style={{ width: "100%", height: 100, objectFit: "cover", borderRadius: 10 }} onError={(e) => (e.target.style.display = "none")} />
+
+      {diferencia !== 0 && (
+        <p style={{ fontSize: 13.5, margin: "12px 0 18px", color: diferencia < 0 ? C.teal : C.clay }}>
+          {diferencia < 0 ? `🟢 Os quedasteis ${eur(Math.abs(diferencia))} por debajo del presupuesto.` : `🔴 Os pasasteis ${eur(diferencia)} del presupuesto.`}
+        </p>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 9 }}>
+        <p style={{ ...styles.label, margin: 0 }}>📸 Nuestros recuerdos</p>
+        {fotos.length > 0 && <span style={{ fontSize: 12.5, color: C.inkSoft }}>{fotos.length} fotos</span>}
+      </div>
+      {fotos.length > 0 ? (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 7 }}>
+          {fotos.map((f, i) => (
+            <img key={i} src={f} alt={`Recuerdo ${i + 1}`} style={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 11 }} onError={(e) => (e.target.style.display = "none")} />
           ))}
         </div>
       ) : (
-        <p style={{ color: C.inkSoft, fontSize: 13.5 }}>No se añadieron fotos a este viaje.</p>
+        <div style={{ background: C.paperAlt, borderRadius: 14, padding: 22, textAlign: "center", color: C.inkSoft }}>
+          <Camera size={24} color={C.teal} style={{ marginBottom: 6 }} />
+          <p style={{ margin: 0, fontSize: 13.5 }}>Todavía no hay fotos. Añadid algunas para guardar este recuerdo para siempre. ♥</p>
+        </div>
       )}
+    </Modal>
+  );
+}
+
+function MiniMemory({ label, value }) {
+  return (
+    <div style={{ background: C.paperAlt, borderRadius: 12, padding: "10px 12px" }}>
+      <p style={{ ...styles.label, marginBottom: 3 }}>{label}</p>
+      <p style={{ margin: 0, fontFamily: "Fraunces, serif", fontSize: 16 }}>{value}</p>
+    </div>
+  );
+}
+
+function EditarDiario({ viaje, persist, showToast, onClose }) {
+  const [form, setForm] = useState({
+    recuerdo: viaje.recuerdo || "",
+    momentoFavorito: viaje.momentoFavorito || "",
+    notas: viaje.notas || "",
+    gastoReal: viaje.gastoReal ?? "",
+    valoracion: viaje.valoracion || 5,
+    volveriamos: viaje.volveriamos || "si",
+    fotos: Array.isArray(viaje.fotos) ? viaje.fotos : [],
+  });
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const handleFiles = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    setUploading(true); setUploadError("");
+    try {
+      const nuevas = [];
+      for (const file of files.slice(0, 12)) nuevas.push(await resizeImage(file, 1000, 0.82));
+      setForm((f) => ({ ...f, fotos: [...f.fotos, ...nuevas].slice(0, 24) }));
+    } catch (err) {
+      console.error(err); setUploadError("No se pudieron cargar una o más fotos.");
+    } finally { setUploading(false); e.target.value = ""; }
+  };
+
+  const guardar = () => {
+    persist((prev) => ({
+      ...prev,
+      viajes: prev.viajes.map((v) => v.id === viaje.id ? { ...v, recuerdo: form.recuerdo, momentoFavorito: form.momentoFavorito, notas: form.notas, gastoReal: Number(form.gastoReal) || 0, valoracion: Number(form.valoracion), volveriamos: form.volveriamos, fotos: form.fotos } : v),
+    }));
+    showToast("♥ Recuerdo guardado");
+    onClose();
+  };
+
+  return (
+    <Modal title={`Nuestro recuerdo · ${viaje.ciudad}`} onClose={onClose} width={620}>
+      <div style={{ background: "linear-gradient(135deg,#fdf4e7,#f4ebe0)", borderRadius: 16, padding: "16px 18px", marginBottom: 18, textAlign: "center" }}>
+        <div style={{ fontSize: 22 }}>✦ ♥ ✦</div>
+        <p style={{ margin: "5px 0 0", fontFamily: "Fraunces, serif", fontSize: 16 }}>“Los mejores viajes son los que seguimos recordando juntos.”</p>
+      </div>
+      <Field label="Una frase para recordar este viaje">
+        <input style={styles.input} value={form.recuerdo} onChange={(e) => set("recuerdo", e.target.value)} placeholder="El viaje en el que nos perdimos y acabamos cenando frente al mar…" />
+      </Field>
+      <Field label="✨ Nuestro momento favorito">
+        <textarea style={{ ...styles.input, minHeight: 72 }} value={form.momentoFavorito} onChange={(e) => set("momentoFavorito", e.target.value)} placeholder="Ese momento que, si cerramos los ojos, volveríamos a vivir…" />
+      </Field>
+      <Field label="📖 Nuestra historia">
+        <textarea style={{ ...styles.input, minHeight: 120 }} value={form.notas} onChange={(e) => set("notas", e.target.value)} placeholder="Contad aquí lo que queráis recordar de este viaje…" />
+      </Field>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <Field label="💶 Gasto real (€)" grow><input type="number" style={styles.input} value={form.gastoReal} onChange={(e) => set("gastoReal", e.target.value)} /></Field>
+        <Field label="¿Volveríamos?" grow>
+          <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+            <TabPill active={form.volveriamos === "si"} onClick={() => set("volveriamos", "si")} label="Sí ♥" />
+            <TabPill active={form.volveriamos === "talvez"} onClick={() => set("volveriamos", "talvez")} label="Quizá" />
+            <TabPill active={form.volveriamos === "no"} onClick={() => set("volveriamos", "no")} label="No" />
+          </div>
+        </Field>
+      </div>
+      <Field label="Valoración">
+        <div style={{ display: "flex", gap: 4 }}>
+          {[1,2,3,4,5].map((n) => (
+            <button key={n} onClick={() => set("valoracion", n)} style={{ background: "none", border: "none", padding: 2 }} aria-label={`${n} estrellas`}>
+              <Star size={27} fill={n <= form.valoracion ? C.amber : "none"} color={C.amber} />
+            </button>
+          ))}
+        </div>
+      </Field>
+      <Field label="📸 Fotos de nuestro viaje">
+        <input id={`diary-files-${viaje.id}`} type="file" accept="image/*" multiple onChange={handleFiles} style={{ position: "absolute", width: 1, height: 1, opacity: 0 }} />
+        <label htmlFor={`diary-files-${viaje.id}`} style={{ ...styles.btnGhost, width: "100%", justifyContent: "center", opacity: uploading ? .7 : 1 }}>
+          <Camera size={16} /> {uploading ? "Preparando recuerdos…" : "Añadir fotos desde el móvil"}
+        </label>
+        {uploadError && <p style={{ color: C.clay, fontSize: 12, marginTop: 6 }}>{uploadError}</p>}
+        {form.fotos.length > 0 && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 7, marginTop: 10 }}>
+            {form.fotos.map((f, i) => (
+              <div key={i} style={{ position: "relative" }}>
+                <img src={f} alt="" style={{ width: "100%", aspectRatio: "1", objectFit: "cover", borderRadius: 9 }} />
+                <button onClick={() => set("fotos", form.fotos.filter((_, idx) => idx !== i))} style={{ position: "absolute", top: 4, right: 4, width: 24, height: 24, borderRadius: "50%", border: "none", background: "rgba(255,255,255,.9)", display: "flex", alignItems: "center", justifyContent: "center" }}><X size={13} /></button>
+              </div>
+            ))}
+          </div>
+        )}
+      </Field>
+      <button style={{ ...styles.btnPrimary, width: "100%", justifyContent: "center", marginTop: 4 }} onClick={guardar}>Guardar nuestro recuerdo ♥</button>
     </Modal>
   );
 }

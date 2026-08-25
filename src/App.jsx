@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { createClient } from "@supabase/supabase-js";
 import {
   Home, MapPin, PiggyBank, Plane, BarChart3, Plus, X, Heart,
   Camera, Check, ChevronDown, Trash2, Pencil, Sparkles, Star,
@@ -148,21 +149,52 @@ function buildDemoData() {
    PERSISTENCIA
 ============================================================ */
 const STORE_KEY = "travel-app-data";
-async function loadData() {
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+async function loadLocalData() {
   try {
-    const res = await window.storage.get(STORE_KEY, true);
-    if (res && res.value) return JSON.parse(res.value);
-  } catch (e) { /* not found yet */ }
-  return null;
+    if (window.storage?.get) {
+      const res = await window.storage.get(STORE_KEY, true);
+      if (res && res.value) return JSON.parse(res.value);
+    }
+  } catch (e) { /* fallback below */ }
+  try {
+    const raw = window.localStorage.getItem(STORE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
 }
-async function saveData(data) {
+
+async function saveLocalData(data) {
   try {
-    await window.storage.set(STORE_KEY, JSON.stringify(data), true);
+    const serialized = JSON.stringify(data);
+    if (window.storage?.set) await window.storage.set(STORE_KEY, serialized, true);
+    try { window.localStorage.setItem(STORE_KEY, serialized); } catch (e) {}
     return true;
   } catch (e) {
-    console.error("Error guardando datos", e);
+    console.error("Error guardando datos localmente", e);
     return false;
   }
+}
+
+async function loadCloudData(userId) {
+  const { data, error } = await supabase
+    .from("app_state")
+    .select("data")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.data || null;
+}
+
+async function saveCloudData(userId, data) {
+  const { error } = await supabase
+    .from("app_state")
+    .upsert({ user_id: userId, data, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+  if (error) throw error;
 }
 
 /* ============================================================
@@ -171,6 +203,8 @@ async function saveData(data) {
 export default function App() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [session, setSession] = useState(null);
+  const [authError, setAuthError] = useState("");
   const [tab, setTab] = useState("inicio");
   const [toast, setToast] = useState(null);
   // Cuando llegamos a la ruleta desde “¿A dónde nos podemos escapar?”,
@@ -179,30 +213,72 @@ export default function App() {
   const dataRef = useRef(null);
 
   useEffect(() => {
-    (async () => {
-      let d = await loadData();
-      if (!d) {
-        d = buildDemoData();
-        await saveData(d);
-      } else {
-        const migrated = migrateData(d);
-        if (migrated !== d || migrated.version !== d.version) await saveData(migrated);
-        d = migrated;
-      }
-      dataRef.current = d;
-      setData(d);
-      setLoading(false);
-    })();
+    let mounted = true;
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (mounted) setSession(session);
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (mounted) setSession(nextSession);
+    });
+    return () => { mounted = false; listener.subscription.unsubscribe(); };
   }, []);
+
+  useEffect(() => {
+    if (!session?.user?.id) { setLoading(false); setData(null); return; }
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const local = await loadLocalData();
+        const cloud = await loadCloudData(session.user.id);
+        let d = cloud || local;
+        if (!d) d = buildDemoData();
+        d = migrateData(d);
+        if (!cloud) {
+          // Primera conexión: migramos silenciosamente lo que ya estaba en el móvil.
+          await saveCloudData(session.user.id, d);
+        }
+        await saveLocalData(d);
+        if (!cancelled) { dataRef.current = d; setData(d); }
+      } catch (e) {
+        console.error("Error conectando con Supabase", e);
+        if (!cancelled) setAuthError(`No se pudo cargar Nuestro Atlas: ${e.message || "error de conexión"}`);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [session?.user?.id]);
+
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    const channel = supabase
+      .channel("nuestro-atlas-sync")
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "app_state", filter: `user_id=eq.${session.user.id}` }, (payload) => {
+        const remote = payload.new?.data;
+        if (!remote) return;
+        dataRef.current = remote;
+        setData(remote);
+        saveLocalData(remote);
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [session?.user?.id]);
 
   const persist = useCallback((updater) => {
     setData((prev) => {
       const next = typeof updater === "function" ? updater(prev) : updater;
       dataRef.current = next;
-      saveData(next);
+      saveLocalData(next);
+      if (session?.user?.id) {
+        saveCloudData(session.user.id, next).catch((e) => {
+          console.error("Error sincronizando con Supabase", e);
+          setToast({ msg: "Cambios guardados en el móvil, pero no se pudieron sincronizar ☁️", kind: "error", key: uid() });
+        });
+      }
       return next;
     });
-  }, []);
+  }, [session?.user?.id]);
 
   const showToast = useCallback((msg, kind = "ok") => {
     setToast({ msg, kind, key: uid() });
@@ -215,12 +291,16 @@ export default function App() {
   const verEnMapa = useCallback((destino) => { setMapFocusId(destino.id); setTab("mapa"); }, []);
   const verDestino = useCallback((destinoId) => { setDestinoFocusId(destinoId); setTab("destinos"); }, []);
 
+  if (!session) {
+    return <AuthScreen authError={authError} onError={setAuthError} />;
+  }
+
   if (loading || !data) {
     return (
       <div style={styles.loadingScreen}>
         <Compass className="spin-slow" size={40} color="#DD9A3C" />
         <p style={{ fontFamily: "Fraunces, serif", color: "#F7F2E8", marginTop: 14, fontSize: 18 }}>
-          Preparando el mapa…
+          Sincronizando vuestro Atlas…
         </p>
       </div>
     );
@@ -376,6 +456,43 @@ function GlobalStyle() {
         .nav-mobile { display:none !important; }
       }
     `}</style>
+  );
+}
+
+function AuthScreen({ authError, onError }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const entrar = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    onError("");
+    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+    if (error) onError(error.message || "No se pudo iniciar sesión.");
+    setBusy(false);
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: "linear-gradient(160deg,#22322C 0%,#31483F 58%,#1C2924 100%)", display: "flex", alignItems: "center", justifyContent: "center", padding: 22 }}>
+      <form onSubmit={entrar} style={{ width: "100%", maxWidth: 430, background: "#F7F2E8", borderRadius: 28, padding: 28, boxShadow: "0 20px 60px rgba(0,0,0,.25)" }}>
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
+          <div style={{ fontSize: 30 }}>✦ ♥ ✦</div>
+          <h1 style={{ margin: "8px 0 4px", fontFamily: "Fraunces, serif", fontSize: 30, color: "#22322C" }}>Nuestro Atlas</h1>
+          <p style={{ margin: 0, color: "#6D756F" }}>Vuestros viajes, juntos y sincronizados.</p>
+        </div>
+        <Field label="Email">
+          <input type="email" required autoComplete="email" style={styles.input} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="vuestro email" />
+        </Field>
+        <Field label="Contraseña">
+          <input type="password" required autoComplete="current-password" style={styles.input} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
+        </Field>
+        {authError && <p style={{ color: C.clay, fontSize: 13, lineHeight: 1.4, background: "#f8e8e2", padding: "10px 12px", borderRadius: 10 }}>{authError}</p>}
+        <button disabled={busy} type="submit" style={{ ...styles.btnPrimary, width: "100%", justifyContent: "center", marginTop: 6, opacity: busy ? .7 : 1 }}>
+          {busy ? "Entrando…" : "Entrar en nuestro Atlas ♥"}
+        </button>
+      </form>
+    </div>
   );
 }
 

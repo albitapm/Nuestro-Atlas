@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import { createClient } from "@supabase/supabase-js";
 import {
   Home, MapPin, PiggyBank, Plane, BarChart3, Plus, X, Heart,
@@ -601,9 +602,21 @@ function Modal({ title, onClose, children, width = 520, inline = false }) {
 }
 
 function ObjectiveChangeConfirm({ current, next, onConfirm, onCancel }) {
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(27,42,38,0.55)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div className="pop" style={{ background: "#fff", borderRadius: 20, padding: 26, maxWidth: 390, width: "100%", textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,0.18)" }}>
+  const modal = (
+    <div
+      style={{
+        position: "fixed", inset: 0, width: "100vw", height: "100dvh",
+        background: "rgba(27,42,38,0.55)", zIndex: 100,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: "20px", overflowY: "auto",
+      }}
+      onClick={onCancel}
+    >
+      <div
+        className="pop"
+        onClick={(e) => e.stopPropagation()}
+        style={{ background: "#fff", borderRadius: 20, padding: 26, maxWidth: 390, width: "100%", textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,0.18)", margin: "auto" }}
+      >
         <div style={{ fontSize: 30, marginBottom: 8 }}>🎯</div>
         <h3 style={{ fontFamily: "Fraunces, serif", fontSize: 21, margin: "0 0 10px", color: C.ink }}>Ya tenéis un destino objetivo</h3>
         <p style={{ fontSize: 14, lineHeight: 1.55, color: C.inkSoft, margin: "0 0 18px" }}>
@@ -617,12 +630,25 @@ function ObjectiveChangeConfirm({ current, next, onConfirm, onCancel }) {
       </div>
     </div>
   );
+  return createPortal(modal, document.body);
 }
 
 function Confirm({ text, onConfirm, onCancel }) {
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(27,42,38,0.55)", zIndex: 90, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div className="pop" style={{ background: "#fff", borderRadius: 18, padding: 24, maxWidth: 360, textAlign: "center" }}>
+  const modal = (
+    <div
+      style={{
+        position: "fixed", inset: 0, width: "100vw", height: "100dvh",
+        background: "rgba(27,42,38,0.55)", zIndex: 90,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: "20px", overflowY: "auto",
+      }}
+      onClick={onCancel}
+    >
+      <div
+        className="pop"
+        onClick={(e) => e.stopPropagation()}
+        style={{ background: "#fff", borderRadius: 18, padding: 24, maxWidth: 360, width: "100%", textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,0.18)", margin: "auto" }}
+      >
         <AlertCircle size={30} color={C.clay} style={{ marginBottom: 10 }} />
         <p style={{ fontSize: 15, color: C.ink, marginBottom: 20 }}>{text}</p>
         <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
@@ -632,6 +658,7 @@ function Confirm({ text, onConfirm, onCancel }) {
       </div>
     </div>
   );
+  return createPortal(modal, document.body);
 }
 
 /* ============================================================

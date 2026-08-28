@@ -600,6 +600,25 @@ function Modal({ title, onClose, children, width = 520, inline = false }) {
   );
 }
 
+function ObjectiveChangeConfirm({ current, next, onConfirm, onCancel }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(27,42,38,0.55)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div className="pop" style={{ background: "#fff", borderRadius: 20, padding: 26, maxWidth: 390, width: "100%", textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,0.18)" }}>
+        <div style={{ fontSize: 30, marginBottom: 8 }}>🎯</div>
+        <h3 style={{ fontFamily: "Fraunces, serif", fontSize: 21, margin: "0 0 10px", color: C.ink }}>Ya tenéis un destino objetivo</h3>
+        <p style={{ fontSize: 14, lineHeight: 1.55, color: C.inkSoft, margin: "0 0 18px" }}>
+          Ahora mismo vuestro objetivo es <strong style={{ color: C.ink }}>{current.ciudad}</strong>.
+          <br />¿Queréis cambiarlo por <strong style={{ color: C.ink }}>{next.ciudad}</strong>?
+        </p>
+        <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+          <button onClick={onCancel} style={styles.btnGhost}>Cancelar</button>
+          <button onClick={onConfirm} style={{ ...styles.btnPrimary, background: C.amber, color: "#3A2A0E" }}>Cambiar objetivo</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Confirm({ text, onConfirm, onCancel }) {
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(27,42,38,0.55)", zIndex: 90, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
@@ -1237,7 +1256,7 @@ function Sorprendenos({ data, persist, showToast, setTab }) {
 /* ============================================================
    DESTINOS
 ============================================================ */
-const emptyForm = { ciudad: "", pais: "", imagen: "", presupuesto: "", duracion: "", dentroPeninsula: false, favorito: false };
+const emptyForm = { ciudad: "", pais: "", imagen: "", presupuesto: "", duracion: "", dentroPeninsula: false, favorito: false, marcarObjetivo: false };
 
 function Destinos({ data, persist, showToast, onVerEnMapa, focusId, onFocusHandled }) {
   const [showForm, setShowForm] = useState(false);
@@ -1247,6 +1266,7 @@ function Destinos({ data, persist, showToast, onVerEnMapa, focusId, onFocusHandl
   const [recomendacionesDestinoId, setRecomendacionesDestinoId] = useState(null);
   const [filtroEstado, setFiltroEstado] = useState("todos");
   const [saving, setSaving] = useState(false);
+  const [objectiveChange, setObjectiveChange] = useState(null);
   const formRef = useRef(null);
   const recomendacionesRef = useRef(null);
   const marcarViajeRef = useRef(null);
@@ -1293,17 +1313,72 @@ function Destinos({ data, persist, showToast, onVerEnMapa, focusId, onFocusHandl
       const found = await geocodeCiudad(form.ciudad, form.pais);
       coords = found || {};
     }
-    if (editing) {
-      persist((prev) => ({ ...prev, destinos: prev.destinos.map((d) => (d.id === editing.id ? { ...d, ...form, ...coords } : d)) }));
-      showToast("Destino actualizado");
-    } else {
-      const nuevo = { id: uid(), ...form, ...coords, estado: "pendiente", fechaCreacion: todayISO() };
-      persist((prev) => ({ ...prev, destinos: [nuevo, ...prev.destinos] }));
-      showToast(coords.lat != null ? "Destino añadido 🌍" : "Destino añadido (sin ubicación en el mapa) 🌍");
+
+    const currentObjective = data.destinos.find((d) => d.estado === "objetivo");
+    const wantsObjective = Boolean(form.marcarObjetivo);
+    const changingObjective = wantsObjective && (!editing || editing.id !== currentObjective?.id);
+
+    // Si ya existe otro objetivo, pedimos confirmación antes de sustituirlo.
+    if (changingObjective && currentObjective) {
+      setSaving(false);
+      setObjectiveChange({ form, coords, currentObjective, editingId: editing?.id || null });
+      return;
     }
+
+    persist((prev) => {
+      const cleanForm = { ...form };
+      delete cleanForm.marcarObjetivo;
+      const objetivoId = wantsObjective ? (editing?.id || null) : null;
+
+      let destinos = prev.destinos;
+      if (editing) {
+        destinos = destinos.map((d) => {
+          if (d.id !== editing.id) return wantsObjective ? { ...d, estado: d.estado === "objetivo" ? "pendiente" : d.estado } : d;
+          return { ...d, ...cleanForm, ...coords, estado: wantsObjective ? "objetivo" : (d.estado === "objetivo" ? "pendiente" : d.estado) };
+        });
+      } else {
+        const nuevo = { id: uid(), ...cleanForm, ...coords, estado: wantsObjective ? "objetivo" : "pendiente", fechaCreacion: todayISO() };
+        destinos = [nuevo, ...destinos];
+      }
+
+      // Garantiza que nunca haya más de un destino con estado "objetivo".
+      if (wantsObjective) {
+        const selectedId = editing ? editing.id : destinos[0]?.id;
+        destinos = destinos.map((d) => d.id === selectedId ? { ...d, estado: "objetivo" } : (d.estado === "objetivo" ? { ...d, estado: "pendiente" } : d));
+      }
+      return { ...prev, destinos };
+    });
+
+    showToast(wantsObjective ? `🎯 ${form.ciudad} es ahora vuestro objetivo` : (editing ? "Destino actualizado" : (coords.lat != null ? "Destino añadido 🌍" : "Destino añadido (sin ubicación en el mapa) 🌍")));
     setSaving(false);
     setShowForm(false);
     setEditing(null);
+  };
+
+  const confirmarCambioObjetivo = () => {
+    if (!objectiveChange) return;
+    const { form, coords, editingId } = objectiveChange;
+    const wantsObjective = true;
+    persist((prev) => {
+      const cleanForm = { ...form };
+      delete cleanForm.marcarObjetivo;
+      let destinos;
+      if (editingId) {
+        destinos = prev.destinos.map((d) => d.id === editingId
+          ? { ...d, ...cleanForm, ...coords, estado: "objetivo" }
+          : (d.estado === "objetivo" ? { ...d, estado: "pendiente" } : d));
+      } else {
+        const nuevo = { id: uid(), ...cleanForm, ...coords, estado: "objetivo", fechaCreacion: todayISO() };
+        destinos = prev.destinos.map((d) => d.estado === "objetivo" ? { ...d, estado: "pendiente" } : d);
+        destinos = [nuevo, ...destinos];
+      }
+      return { ...prev, destinos };
+    });
+    showToast(`🎯 ${form.ciudad} es ahora vuestro objetivo`);
+    setObjectiveChange(null);
+    setShowForm(false);
+    setEditing(null);
+    setSaving(false);
   };
 
   const eliminar = () => {
@@ -1362,7 +1437,7 @@ function Destinos({ data, persist, showToast, onVerEnMapa, focusId, onFocusHandl
               {showForm && editing?.id === d.id && (
                 <div ref={formRef} style={{ gridColumn: "1 / -1" }}>
                   <DestinoForm
-                    initial={editing}
+                    initial={{ ...editing, marcarObjetivo: editing?.estado === "objetivo" }}
                     onCancel={() => { setShowForm(false); setEditing(null); }}
                     onSave={guardar}
                     isEdit
@@ -1441,6 +1516,14 @@ function Destinos({ data, persist, showToast, onVerEnMapa, focusId, onFocusHandl
       </div>
 
       {toDelete && <Confirm text={`¿Eliminar ${toDelete.ciudad}? Esta acción no se puede deshacer.`} onConfirm={eliminar} onCancel={() => setToDelete(null)} />}
+      {objectiveChange && (
+        <ObjectiveChangeConfirm
+          current={objectiveChange.currentObjective}
+          next={objectiveChange.form}
+          onConfirm={confirmarCambioObjetivo}
+          onCancel={() => setObjectiveChange(null)}
+        />
+      )}
     </div>
   );
 }
@@ -1631,6 +1714,10 @@ function DestinoForm({ initial, onSave, onCancel, isEdit, saving, inline = false
           <TabPill active={form.dentroPeninsula} onClick={() => set("dentroPeninsula", true)} label="Dentro de la península" />
         </div>
       </Field>
+      <div style={{ margin: "14px 0 8px" }}>
+        <Checkbox label="🎯 Marcar como nuestro objetivo actual" checked={Boolean(form.marcarObjetivo)} onChange={(v) => set("marcarObjetivo", v)} />
+        <p style={{ margin: "5px 0 0 28px", fontSize: 11.5, color: C.inkSoft }}>Solo podéis tener un destino como objetivo a la vez.</p>
+      </div>
       <div style={{ margin: "14px 0" }}>
         <Checkbox label="Marcar como favorito ♡" checked={form.favorito} onChange={(v) => set("favorito", v)} />
       </div>
